@@ -4,15 +4,21 @@ service cloud.firestore {
   match /databases/{database}/documents {
     
     match /users/{userId} {
-      // SECURITY: Utilizatorul poate citi doar propriul profil. 
-      // Folosim ID-ul de document care este egal cu ID-ul Telegram.
-      allow read: if true; // În producție reală aici s-ar folosi request.auth.uid corelat cu custom claims
+      // SECURITY 6.0: Blocăm citirea publică. 
+      // Permitem citirea doar dacă documentul aparține utilizatorului curent.
+      // Notă: userId în DB este ID-ul Telegram.
+      allow read: if request.auth != null && request.auth.uid == userId; 
       allow update: if false;
       allow create: if request.resource.data.balance == 0;
     }
     
     match /claims/{claimId} {
       allow create: if request.resource.data.status == "pending_verification";
+      allow read, update, delete: if false;
+    }
+
+    match /ad_claims/{claimId} {
+      allow create: if true;
       allow read, update, delete: if false;
     }
 
@@ -32,8 +38,6 @@ service cloud.firestore {
     }
 
     match /hotspots/{hId} {
-      // SECURITY: Permitem citirea unui hotspot specific (get), 
-      // dar blocăm listarea întregii colecții (list) pentru a preveni scraping-ul locațiilor rare.
       allow get: if true;
       allow list: if false;
     }

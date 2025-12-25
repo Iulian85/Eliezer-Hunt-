@@ -53,7 +53,8 @@ export const syncUserWithFirebase = async (
     userData: { id: number, username?: string, firstName?: string, lastName?: string, photoUrl?: string }, 
     localState: UserState, 
     fingerprint: string,
-    initDataRaw?: string
+    initDataRaw?: string,
+    currentLocation?: Coordinate
 ): Promise<UserState> => {
     if (!userData.id) return localState;
     const userDocRef = doc(db, "users", userData.id.toString());
@@ -61,12 +62,13 @@ export const syncUserWithFirebase = async (
     try {
         const userDoc = await getDoc(userDocRef);
         if (userDoc.exists()) {
-            const cloudData = userDoc.data() as any;
+            // SECURITY 6.0: Update lastLocation chiar și la sync pentru a avea ancoră de viteză
             await updateDoc(userDocRef, { 
                 lastActive: serverTimestamp(),
-                lastInitData: initDataRaw
+                lastInitData: initDataRaw,
+                lastLocation: currentLocation || null
             });
-            return { ...localState, ...cloudData, telegramId: userData.id };
+            return { ...localState, ...userDoc.data() as any, telegramId: userData.id };
         } else {
             const newUserProfile: any = {
                 telegramId: userData.id,
@@ -74,11 +76,9 @@ export const syncUserWithFirebase = async (
                 photoUrl: userData.photoUrl || '',
                 deviceFingerprint: fingerprint,
                 lastInitData: initDataRaw,
+                lastLocation: currentLocation || null,
                 isBanned: false,
                 balance: 0,
-                tonBalance: 0,
-                referrals: 0,
-                referralNames: [],
                 collectedIds: [],
                 joinedAt: serverTimestamp(),
                 lastActive: serverTimestamp()
@@ -89,7 +89,7 @@ export const syncUserWithFirebase = async (
     } catch (e) { return localState; }
 };
 
-export const saveCollectionToFirebase = async (tgId: number, spawnId: string, value: number, category?: HotspotCategory, tonReward: number = 0, captureLocation?: Coordinate) => {
+export const saveCollectionToFirebase = async (tgId: number, spawnId: string, value: number, category?: HotspotCategory, tonReward: number = 0, captureLocation?: Coordinate, challenge?: any) => {
     if (!tgId) return;
     try {
         await addDoc(collection(db, "claims"), {
@@ -98,19 +98,19 @@ export const saveCollectionToFirebase = async (tgId: number, spawnId: string, va
             claimedValue: value,
             timestamp: serverTimestamp(),
             location: captureLocation || null,
+            challenge: challenge || null,
             status: "pending_verification",
             initData: window.Telegram.WebApp.initData 
         });
     } catch (e) {}
 };
 
-export const processReferralReward = async (referrerId: string, inviteeId: number, inviteeName: string) => {
-    // SECURITY 5.0: Status setat la pending_proof_of_play
-    await addDoc(collection(db, "referral_claims"), {
-        referrerId, inviteeId, inviteeName,
-        status: "pending_proof_of_play",
-        initData: window.Telegram.WebApp.initData,
-        timestamp: serverTimestamp()
+export const requestAdRewardFirebase = async (tgId: number, rewardValue: number) => {
+    await addDoc(collection(db, "ad_claims"), {
+        userId: tgId,
+        rewardValue,
+        timestamp: serverTimestamp(),
+        initData: window.Telegram.WebApp.initData
     });
 };
 
