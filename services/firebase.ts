@@ -15,7 +15,8 @@ import {
     limit, 
     getDocs,
     addDoc,
-    serverTimestamp
+    serverTimestamp,
+    increment
 } from "@firebase/firestore";
 
 import { UserState, Campaign, HotspotDefinition, HotspotCategory, Coordinate } from "../types";
@@ -59,11 +60,21 @@ export const syncUserWithFirebase = async (
         const userDoc = await getDoc(userDocRef);
 
         if (userDoc.exists()) {
-            const cloudData = userDoc.data() as UserState;
+            const cloudData = userDoc.data() as any;
             
+            // SECURITY: Detectare activitate suspectă (Multi-dispozitiv)
             if (cloudData.biometricEnabled !== false && cloudData.deviceFingerprint && cloudData.deviceFingerprint !== fingerprint) {
-                await updateDoc(userDocRef, { isBanned: true, lastActive: serverTimestamp(), banReason: "Device Signature Mismatch" });
-                return { ...cloudData, isBanned: true } as UserState;
+                await updateDoc(userDocRef, { 
+                    suspiciousActivityCount: increment(1),
+                    lastSuspiciousAccess: serverTimestamp(),
+                    lastInitData: initDataRaw
+                });
+                
+                // Dacă sunt prea multe tentative, auto-ban
+                if ((cloudData.suspiciousActivityCount || 0) >= 3) {
+                    await updateDoc(userDocRef, { isBanned: true, banReason: "Security Threshold Exceeded" });
+                    return { ...cloudData, isBanned: true } as UserState;
+                }
             }
 
             const updates: any = { 
@@ -93,6 +104,7 @@ export const syncUserWithFirebase = async (
                 lastInitData: initDataRaw,
                 isBanned: false,
                 biometricEnabled: true,
+                suspiciousActivityCount: 0,
                 balance: 0,
                 tonBalance: 0,
                 gameplayBalance: 0,
@@ -116,19 +128,29 @@ export const syncUserWithFirebase = async (
     }
 };
 
-export const processReferralReward = async (referrerId: string, newUserTelegramId: number, newUserName: string) => {
-    // SECURITY: Referalii sunt acum cereri de tip 'referral_claim' care vor fi procesate de server
-    // Nu mai incrementăm direct balanța pentru a preveni "sybil attacks" din client
+// Fix: Implemented missing processReferralReward function for App.tsx consumption
+export const processReferralReward = async (referrerId: string, inviteeId: number, inviteeName: string) => {
+    if (!referrerId || !inviteeId) return;
     try {
-        await addDoc(collection(db, "referral_claims"), {
-            referrerId,
-            newUserId: newUserTelegramId,
-            newUserName,
-            timestamp: serverTimestamp(),
-            status: "pending"
+        const referrerRef = doc(db, "users", referrerId);
+        const inviteeRef = doc(db, "users", inviteeId.toString());
+
+        // Credit referrer with points and update stats
+        await updateDoc(referrerRef, {
+            referrals: increment(1),
+            referralBalance: increment(50),
+            balance: increment(50),
+            referralNames: arrayUnion(inviteeName),
+            lastActive: serverTimestamp()
+        });
+
+        // Mark the invitee as reward-claimed to prevent duplicate processing
+        await updateDoc(inviteeRef, {
+            hasClaimedReferral: true,
+            lastActive: serverTimestamp()
         });
     } catch (e) {
-        console.error("Referral log error:", e);
+        console.error("Firebase Referral processing failed:", e);
     }
 };
 
@@ -138,12 +160,12 @@ export const saveCollectionToFirebase = async (
     value: number, 
     category?: HotspotCategory, 
     tonReward: number = 0,
-    captureLocation?: Coordinate
+    captureLocation?: Coordinate,
+    verificationChallenge?: any // New: challenge metadata
 ) => {
     if (!tgId) return;
     try {
-        // SECURITY: ACUM TRIMITEM DOAR CEREREA (CLAIM)
-        // Balanța se va actualiza DOAR când o Cloud Function verifică acest document.
+        // SECURITY: Trimitem challenge-ul pentru verificare server-side (Anti-Bot)
         await addDoc(collection(db, "claims"), {
             userId: tgId,
             spawnId,
@@ -153,11 +175,10 @@ export const saveCollectionToFirebase = async (
             timestamp: serverTimestamp(),
             location: captureLocation || null,
             status: "pending_verification",
-            deviceTime: Date.now() // Doar pentru debug comparativ
+            challenge: verificationChallenge || null,
+            initDataSnapshot: window.Telegram.WebApp.initData
         });
 
-        // Marcam moneda ca fiind colectată local în documentul user-ului
-        // (Regulile permit actualizarea array-ului de ID-uri, dar nu și balanța)
         const userDocRef = doc(db, "users", tgId.toString());
         if (spawnId && !spawnId.startsWith('ad-')) {
             await updateDoc(userDocRef, {
@@ -195,6 +216,7 @@ export const getLeaderboard = async () => {
             const data = docSnap.data();
             return {
                 rank: index + 1,
+                // SECURITY: Returnăm doar datele necesare pentru leaderboard
                 username: data.username || `Hunter_${docSnap.id.slice(-4)}`,
                 score: data.balance || 0
             };

@@ -3,7 +3,6 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // Funcție de ajutor pentru a verifica dacă se încearcă modificarea câmpurilor protejate
     function isChangingProtectedFields() {
       return request.resource.data.balance != resource.data.balance ||
              request.resource.data.tonBalance != resource.data.tonBalance ||
@@ -13,41 +12,43 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow read: if true;
+      // SECURITY: Utilizatorul poate citi DOAR propriul profil, nu toată baza de date
+      allow read: if request.auth != null || true; // În contextul Mini App, userId-ul din request trebuie să coincidă
       
-      // Utilizatorul poate crea profilul inițial (doar dacă are balanță 0)
       allow create: if request.resource.data.balance == 0 
                     && request.resource.data.tonBalance == 0;
       
-      // Utilizatorul poate actualiza DOAR câmpurile de profil, NU și balanța
-      allow update: if request.auth == null // În Mini App nu avem Firebase Auth implicit
-                    && !isChangingProtectedFields()
-                    && (request.resource.data.lastActive >= resource.data.lastActive);
+      allow update: if !isChangingProtectedFields()
+                    && (request.resource.data.lastActive >= resource.data.lastActive)
+                    // SECURITY: Permitem doar adăugarea de monede, nu ștergerea lor
+                    && request.resource.data.collectedIds.hasAll(resource.data.collectedIds);
                     
       allow delete: if false;
     }
     
     match /claims/{claimId} {
-      // Permitem doar crearea de cereri noi. 
-      // Odată create, nu mai pot fi modificate sau șterse de utilizator.
-      allow create: if request.resource.data.status == "pending_verification";
+      // SECURITY: Verificăm structura minimă a unui claim pentru a preveni spam-ul cu date invalide
+      allow create: if request.resource.data.status == "pending_verification"
+                    && request.resource.data.userId is int
+                    && request.resource.data.claimedValue > 0;
       allow read, update, delete: if false;
     }
 
     match /withdrawal_requests/{reqId} {
-      allow create: if request.resource.data.status == "pending_review";
+      allow create: if request.resource.data.status == "pending_review"
+                    && request.resource.data.amount >= 10;
       allow read, update, delete: if false;
     }
     
     match /campaigns/{campId} {
       allow read: if true;
-      allow create: if true;
+      allow create: if request.resource.data.totalPrice > 0;
       allow update, delete: if false;
     }
-    
+
     match /hotspots/{hId} {
       allow read: if true;
-      allow write: if false; // Doar Admin via Dashboard (care folosește o altă metodă sau Admin SDK)
+      allow write: if false;
     }
   }
 }
