@@ -108,8 +108,9 @@ export interface UserState {
     photoUrl?: string;
     isBanned?: boolean;
     deviceFingerprint?: string;
-    biometricEnabled?: boolean; // NEW: Toggle per user
-    screenshotLock?: boolean; // Added to fix UserState property missing errors
+    biometricEnabled?: boolean; 
+    lastInitData?: string; // SECURITY: Hash verification storage
+    screenshotLock?: boolean;
 }
 
 export enum Tab {
@@ -150,7 +151,6 @@ declare global {
                 openTelegramLink: (url: string) => void;
                 initData: string;
                 initDataUnsafe: any;
-                // Added missing Telegram WebApp properties to fix property access errors
                 disableVerticalSwipes?: () => void;
                 enableClosingConfirmation?: () => void;
                 HapticFeedback: {

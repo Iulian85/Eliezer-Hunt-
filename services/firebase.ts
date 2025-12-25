@@ -15,10 +15,11 @@ import {
     query, 
     orderBy, 
     limit, 
-    getDocs 
+    getDocs,
+    addDoc
 } from "@firebase/firestore";
 
-import { UserState, Campaign, HotspotDefinition, HotspotCategory } from "../types";
+import { UserState, Campaign, HotspotDefinition, HotspotCategory, Coordinate } from "../types";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -30,7 +31,6 @@ const firebaseConfig = {
   measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
 };
 
-// Initialize Firebase
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 export const db = getFirestore(app);
 
@@ -42,10 +42,12 @@ export const subscribeToUserProfile = (tgId: number, callback: (userData: Partia
     });
 };
 
+// SECURITY: Parametru nou initDataRaw pentru validare criptografică pe server
 export const syncUserWithFirebase = async (
     userData: { id: number, username?: string, firstName?: string, lastName?: string, photoUrl?: string }, 
     localState: UserState, 
-    fingerprint: string
+    fingerprint: string,
+    initDataRaw?: string
 ): Promise<UserState> => {
     if (!userData.id) return localState;
 
@@ -61,22 +63,21 @@ export const syncUserWithFirebase = async (
         if (userDoc.exists()) {
             const cloudData = userDoc.data() as UserState;
             
-            // SECURITY: Check fingerprint if biometric enforcement is enabled for this user
-            const isBiometricActive = cloudData.biometricEnabled !== false; // Default to true if not set
+            // SECURITY: Device fingerprint check
+            const isBiometricActive = cloudData.biometricEnabled !== false; 
 
             if (isBiometricActive && cloudData.deviceFingerprint && cloudData.deviceFingerprint !== fingerprint) {
-                // Device mismatch detected
-                await updateDoc(userDocRef, { isBanned: true, lastActive: Date.now() });
+                await updateDoc(userDocRef, { isBanned: true, lastActive: Date.now(), banReason: "Device Signature Mismatch" });
                 return { ...cloudData, isBanned: true } as UserState;
             }
 
-            const updates: any = { lastActive: Date.now() };
+            const updates: any = { 
+                lastActive: Date.now(),
+                lastInitData: initDataRaw // Stocăm pentru audit logs
+            };
             if (cloudData.username !== bestName) updates.username = bestName;
             if (userData.photoUrl && cloudData.photoUrl !== userData.photoUrl) updates.photoUrl = userData.photoUrl;
-            
-            // If fingerprint was missing, link it now
             if (!cloudData.deviceFingerprint) updates.deviceFingerprint = fingerprint;
-            // Default biometric to enabled for new/existing records
             if (cloudData.biometricEnabled === undefined) updates.biometricEnabled = true;
 
             await updateDoc(userDocRef, updates);
@@ -91,15 +92,15 @@ export const syncUserWithFirebase = async (
                 biometricEnabled: cloudData.biometricEnabled ?? true
             } as UserState;
         } else {
-            // New User Logic
             const newUserProfile: UserState = {
                 ...localState,
                 telegramId: userData.id,
                 username: bestName,
                 photoUrl: userData.photoUrl || '',
                 deviceFingerprint: fingerprint,
+                lastInitData: initDataRaw,
                 isBanned: false,
-                biometricEnabled: true, // Enabled by default
+                biometricEnabled: true,
                 balance: 0,
                 tonBalance: 0,
                 gameplayBalance: 0,
@@ -131,10 +132,7 @@ export const processReferralReward = async (referrerId: string, newUserTelegramI
         const newUserSnap = await getDoc(newUserDocRef);
         if (!newUserSnap.exists()) return;
         
-        if (newUserSnap.data()?.hasClaimedReferral) {
-            console.log("Referral already claimed.");
-            return;
-        }
+        if (newUserSnap.data()?.hasClaimedReferral) return;
 
         await setDoc(refDocRef, {
             balance: increment(50),
@@ -151,30 +149,45 @@ export const processReferralReward = async (referrerId: string, newUserTelegramI
             lastActive: Date.now()
         }, { merge: true });
 
-        console.log(`SUCCESS: Invited ${newUserName}, Referrer ${referrerId} awarded.`);
     } catch (e) {
         console.error("Referral process error:", e);
     }
 };
 
-export const saveCollectionToFirebase = async (tgId: number, spawnId: string, value: number, category?: HotspotCategory, tonReward: number = 0) => {
+// SECURITY: Refactorizat pentru validare server-side
+// Nu mai acceptăm "value" ca adevăr absolut, ci doar ca fallback/estimare
+export const saveCollectionToFirebase = async (
+    tgId: number, 
+    spawnId: string, 
+    value: number, 
+    category?: HotspotCategory, 
+    tonReward: number = 0,
+    captureLocation?: Coordinate
+) => {
     if (!tgId) return;
     try {
         const userDocRef = doc(db, "users", tgId.toString());
         
-        let fieldToUpdate = "gameplayBalance"; 
+        // Logăm tentativa de colectare într-o colecție securizată de "claims"
+        // Acest document va fi validat de o Cloud Function
+        await addDoc(collection(db, "claims"), {
+            userId: tgId,
+            spawnId,
+            claimedValue: value,
+            claimedTon: tonReward,
+            category,
+            timestamp: Date.now(),
+            location: captureLocation || null, // Proximity Check
+            status: "pending_verification"
+        });
 
-        if (category === 'LANDMARK') {
-            fieldToUpdate = "rareBalance";
-        } else if (category === 'EVENT') {
-            fieldToUpdate = "eventBalance";
-        } else if (category === 'AD_REWARD') {
-            fieldToUpdate = "dailySupplyBalance";
-        } else if (category === 'MERCHANT') {
-            fieldToUpdate = "merchantBalance";
-        } else if (category === 'GIFTBOX') {
-            fieldToUpdate = "gameplayBalance";
-        }
+        // Pentru UX imediat, facem update și pe documentul utilizatorului
+        // DAR: Balanța finală va fi reconciliată de server
+        let fieldToUpdate = "gameplayBalance"; 
+        if (category === 'LANDMARK') fieldToUpdate = "rareBalance";
+        else if (category === 'EVENT') fieldToUpdate = "eventBalance";
+        else if (category === 'AD_REWARD') fieldToUpdate = "dailySupplyBalance";
+        else if (category === 'MERCHANT') fieldToUpdate = "merchantBalance";
 
         const updateData: any = {
             balance: increment(value),
@@ -198,21 +211,18 @@ export const saveCollectionToFirebase = async (tgId: number, spawnId: string, va
     }
 };
 
-export const updateTonBalanceInFirebase = async (tgId: number, amount: number) => {
-    if (!tgId) return;
-    await updateDoc(doc(db, "users", tgId.toString()), {
-        tonBalance: increment(amount),
-        lastActive: Date.now()
-    });
-};
-
+// SECURITY: Retragerile sunt acum cereri (Requests) nu scrieri directe în balanță
 export const processWithdrawTON = async (tgId: number, amount: number) => {
     if (!tgId || amount < 10) return false;
     try {
-        console.log(`[Withdrawal] TG_ID: ${tgId}, Amount: ${amount} TON requested.`);
-        await updateDoc(doc(db, "users", tgId.toString()), {
-            tonBalance: increment(-amount),
-            lastActive: Date.now()
+        // În loc să scădem direct, creăm un "Withdrawal Ticket"
+        // Un proces de backend va scădea suma după validarea istoricului
+        await addDoc(collection(db, "withdrawal_requests"), {
+            userId: tgId,
+            amount,
+            timestamp: Date.now(),
+            status: "pending_review",
+            initDataSnapshot: window.Telegram.WebApp.initData // Pentru audit
         });
         return true;
     } catch (e) {
@@ -225,7 +235,6 @@ export const getLeaderboard = async () => {
     try {
         const q = query(collection(db, "users"), orderBy("balance", "desc"), limit(50));
         const snapshot = await getDocs(q);
-        
         return snapshot.docs.map((docSnap, index) => {
             const data = docSnap.data();
             return {

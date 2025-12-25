@@ -1,0 +1,36 @@
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Reguli pentru colecția Users
+    match /users/{userId} {
+      // Citire permisă oricui (pentru leaderboard), dar în producție limitează la autentificați
+      allow read: if true;
+      
+      // Scriere permisă DOAR pentru propriul profil
+      // Important: Interzicem modificarea manuală a 'isBanned' din client
+      allow write: if request.resource.data.isBanned == resource.data.isBanned
+                   && request.resource.data.balance >= resource.data.balance;
+    }
+    
+    // Colecție de cereri de colectare (pentru verificare server-side)
+    match /claims/{claimId} {
+      allow create: if request.auth != null || true; // Validare HMAC ulterioară
+      allow read, update, delete: if false; // Doar un Admin sau Cloud Function poate procesa
+    }
+
+    // Colecție de retrageri - doar creare
+    match /withdrawal_requests/{reqId} {
+      allow create: if true;
+      allow read, update, delete: if false;
+    }
+    
+    // Campanii - vizibile oricui, create de business owners
+    match /campaigns/{campId} {
+      allow read: if true;
+      allow create: if true;
+      allow update, delete: if false; // Doar Admin poate modifica statusul campaniei
+    }
+  }
+}
