@@ -183,46 +183,42 @@ function App() {
         const tg = window.Telegram?.WebApp;
         const bm = tg?.BiometricManager;
 
-        // SECURITY: Bypass-ul biometricEnabled === false a fost eliminat. 
-        // Acum se verifică server-side dacă utilizatorul are permisiune de bypass (admin/tester flag).
-        // Frontend-ul forțează biometria oricând este disponibilă.
+        // Ensure we don't skip if the manager is actually available
+        if (bm && bm.available) {
+            setIsAuthenticating(true);
+            if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
 
-        if (!bm || !bm.available) {
-            // Dacă managerul nu e disponibil (ex: Telegram Desktop), deblocăm doar dacă e Admin sau flag special setat pe server
-            if (isAdmin || (userState as any).biometricEnabled === false) {
+            const triggerAuth = () => {
+                bm.authenticate({ reason: "Synchronizing ELZR Terminal" }, (success) => {
+                    setIsAuthenticating(false);
+                    if (success) {
+                        if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+                        setIsUnlocked(true);
+                    } else {
+                        if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('error');
+                        alert("Biometric Error. Authentication failed.");
+                    }
+                });
+            };
+
+            if (!bm.accessGranted) {
+                bm.requestAccess({ reason: "Secure access to the extraction network" }, (granted) => {
+                    if (granted) triggerAuth();
+                    else {
+                        setIsAuthenticating(false);
+                        alert("Biometric access is mandatory to join the hunt.");
+                    }
+                });
+            } else {
+                triggerAuth();
+            }
+        } else {
+            // Fallback for environments without native biometric support (e.g., Desktop or specific users)
+            if (isAdmin || userState.biometricEnabled === false) {
                 setIsUnlocked(true);
             } else {
-                alert("Protocolul de securitate necesită un dispozitiv mobil cu senzori biometrici activi.");
+                alert("Security protocol requires a mobile device with active biometric sensors.");
             }
-            return;
-        }
-
-        setIsAuthenticating(true);
-        if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
-
-        const triggerAuth = () => {
-            bm.authenticate({ reason: "Sincronizare terminal ELZR" }, (success) => {
-                setIsAuthenticating(false);
-                if (success) {
-                    if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
-                    setIsUnlocked(true);
-                } else {
-                    if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('error');
-                    alert("Eroare Biometrică. Sincronizarea eșuată.");
-                }
-            });
-        };
-
-        if (!bm.accessGranted) {
-            bm.requestAccess({ reason: "Acces securizat la rețeaua de extracție" }, (granted) => {
-                if (granted) triggerAuth();
-                else {
-                    setIsAuthenticating(false);
-                    alert("Accesul biometric este obligatoriu pentru a juca.");
-                }
-            });
-        } else {
-            triggerAuth();
         }
     };
 
@@ -265,8 +261,8 @@ function App() {
                     <div className="w-24 h-24 bg-cyan-600/10 rounded-[2.5rem] flex items-center justify-center border-2 border-cyan-600/30 mb-10 shadow-[0_0_50px_rgba(6,182,212,0.15)]">
                         <SmartphoneNfc className="text-cyan-400" size={48} />
                     </div>
-                    <h1 className="text-3xl font-black text-white mb-4 uppercase tracking-tighter font-[Rajdhani]">Acces Restricționat</h1>
-                    <p className="text-slate-400 text-xs font-medium leading-relaxed mb-10 uppercase tracking-widest">Protocolul Eliezer Hunt necesită sincronizare via Telegram Bot.</p>
+                    <h1 className="text-3xl font-black text-white mb-4 uppercase tracking-tighter font-[Rajdhani]">Access Restricted</h1>
+                    <p className="text-slate-400 text-xs font-medium leading-relaxed mb-10 uppercase tracking-widest">The Eliezer Hunt protocol requires synchronization via the Telegram Bot.</p>
                     <a href="https://t.me/Obadiah_Bot/eliezer" className="w-full py-5 bg-white text-black font-black text-sm uppercase tracking-widest rounded-2xl flex items-center justify-center gap-3">
                         <Send size={20} /> Open in Telegram
                     </a>
@@ -281,8 +277,8 @@ function App() {
                 <div className="w-24 h-24 bg-red-600/10 rounded-[2.5rem] flex items-center justify-center border-2 border-red-600/30 mb-8 shadow-[0_0_50px_rgba(220,38,38,0.2)]">
                     <Fingerprint className="text-red-500" size={48} />
                 </div>
-                <h1 className="text-3xl font-black text-white mb-4 uppercase tracking-tighter font-[Rajdhani]">Alertă Securitate</h1>
-                <p className="text-slate-400 text-xs leading-relaxed max-w-xs uppercase font-bold">Cont blocat pentru activități suspecte. Contactați departamentul admin.</p>
+                <h1 className="text-3xl font-black text-white mb-4 uppercase tracking-tighter font-[Rajdhani]">Security Alert</h1>
+                <p className="text-slate-400 text-xs leading-relaxed max-w-xs uppercase font-bold">Account locked due to suspicious activity. Please contact support.</p>
             </div>
         );
     }
@@ -303,9 +299,9 @@ function App() {
                         {isAuthenticating && <div className="absolute top-0 left-0 w-full h-1 bg-cyan-500/50 animate-scan"></div>}
                     </div>
                     <button onClick={handleUnlock} disabled={isAuthenticating} className="w-full py-5 rounded-[1.5rem] bg-white text-black font-black uppercase tracking-widest text-sm flex items-center justify-center gap-3 active:scale-95 transition-all">
-                        {isAuthenticating ? <Loader2 className="animate-spin" /> : <Lock />} DEBLOCARE INTERFAȚĂ
+                        {isAuthenticating ? <Loader2 className="animate-spin" /> : <Lock />} UNLOCK INTERFACE
                     </button>
-                    <p className="mt-8 text-[8px] text-slate-700 font-black uppercase tracking-widest">Protocol v7.5 • Hardened Gateway</p>
+                    <p className="mt-8 text-[8px] text-slate-700 font-black uppercase tracking-widest">Protocol v7.5 • Hardened Biometric Gateway</p>
                 </div>
                 <style>{`@keyframes scan { 0% { transform: translateY(0); opacity: 0; } 50% { opacity: 1; } 100% { transform: translateY(128px); opacity: 0; } } .animate-scan { animation: scan 1.5s ease-in-out infinite; }`}</style>
             </div>

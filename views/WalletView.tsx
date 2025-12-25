@@ -86,7 +86,6 @@ export const WalletView: React.FC<WalletViewProps> = ({
                 <div className="scale-90 origin-right"><TonConnectButton /></div>
             </div>
 
-            {/* TOTAL POINTS CARD */}
             <div className="bg-slate-900/80 border-2 border-slate-800 rounded-[2.5rem] p-8 mb-8 relative overflow-hidden shadow-2xl">
                 <div className="absolute -right-6 -top-6 bg-cyan-500/10 w-48 h-48 rounded-full blur-3xl"></div>
                 <div className="flex flex-col items-center text-center relative z-10">
@@ -100,7 +99,6 @@ export const WalletView: React.FC<WalletViewProps> = ({
                 </div>
             </div>
 
-            {/* AIRDROP ESTIMATION SECTION (Restaurată) */}
             <div className="mb-10">
                 <div className="flex items-center justify-between mb-6 px-2">
                     <h2 className="text-sm font-black text-white uppercase tracking-[0.2em] flex items-center gap-2">
@@ -108,14 +106,11 @@ export const WalletView: React.FC<WalletViewProps> = ({
                     </h2>
                     <div className="h-px flex-1 bg-slate-800 ml-4"></div>
                 </div>
-
                 <div className="space-y-3">
                     {estimationItems.map((item, idx) => (
                         <div key={idx} className="bg-slate-900/40 border border-slate-800/60 rounded-2xl p-4 flex items-center justify-between group transition-all hover:bg-slate-800/40">
                             <div className="flex items-center gap-4">
-                                <div className={`p-2.5 rounded-xl ${item.bg} ${item.color}`}>
-                                    <item.icon size={18} />
-                                </div>
+                                <div className={`p-2.5 rounded-xl ${item.bg} ${item.color}`}><item.icon size={18} /></div>
                                 <span className="text-xs font-bold text-slate-400 uppercase tracking-tight group-hover:text-white transition-colors">{item.label}</span>
                             </div>
                             <div className="flex flex-col items-end">
@@ -125,56 +120,33 @@ export const WalletView: React.FC<WalletViewProps> = ({
                         </div>
                     ))}
                 </div>
-                
                 <div className="mt-4 p-4 bg-cyan-900/20 border border-cyan-500/20 rounded-2xl flex items-center justify-between shadow-lg">
                     <span className="text-[10px] text-cyan-200 font-black uppercase tracking-widest">Global Protocol Multiplier</span>
                     <span className="text-lg font-black text-cyan-400 font-mono">x1.00</span>
                 </div>
             </div>
 
-            {/* DAILY REWARD BLOCK */}
             <div className="bg-slate-900 border-2 border-slate-800 p-5 rounded-[2rem] flex items-center justify-between mb-8 shadow-xl">
                 <div className="flex items-center gap-4">
-                    <div className={`p-3 rounded-2xl ${timeRemaining ? 'bg-slate-800 text-slate-600' : 'bg-green-600/20 text-green-400 animate-pulse'}`}>
-                        <Gift size={24} />
-                    </div>
+                    <div className={`p-3 rounded-2xl ${timeRemaining ? 'bg-slate-800 text-slate-600' : 'bg-green-600/20 text-green-400 animate-pulse'}`}><Gift size={24} /></div>
                     <div>
                         <h3 className="font-black text-white text-xs uppercase tracking-widest leading-none mb-1">Daily Supply</h3>
-                        <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest">
-                            {timeRemaining ? `Next in: ${timeRemaining}` : '+500 ELZR Ready'}
-                        </p>
+                        <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest">{timeRemaining ? `Next in: ${timeRemaining}` : '+500 ELZR Ready'}</p>
                     </div>
                 </div>
-                <button 
-                    onClick={handleWatchAd} 
-                    disabled={loadingAd || !!timeRemaining} 
-                    className={`px-6 py-3 rounded-xl font-black text-[10px] shadow-lg active:scale-95 transition-all uppercase tracking-[0.2em] border
-                        ${timeRemaining ? "bg-slate-800 text-slate-700 border-slate-700" : "bg-white text-black border-white hover:bg-slate-200"}
-                    `}
-                >
+                <button onClick={handleWatchAd} disabled={loadingAd || !!timeRemaining} className={`px-6 py-3 rounded-xl font-black text-[10px] shadow-lg active:scale-95 transition-all uppercase tracking-[0.2em] border ${timeRemaining ? "bg-slate-800 text-slate-700 border-slate-700" : "bg-white text-black border-white hover:bg-slate-200"}`}>
                     {loadingAd ? <Loader2 className="animate-spin" size={14}/> : (timeRemaining ? "Claimed" : "Claim")}
                 </button>
             </div>
 
-            {/* TON WITHDRAWAL CARD */}
             <div className="bg-slate-900/60 p-8 rounded-[2.5rem] mb-12 relative overflow-hidden border-2 border-blue-500/20 shadow-2xl">
                 <div className="relative z-10">
                     <div className="flex items-center gap-2 mb-6">
                         <Wallet className="text-blue-400" size={18} />
                         <span className="text-[10px] text-blue-200 font-black uppercase tracking-widest">TON Assets (Network A)</span>
                     </div>
-                    <div className="mb-8 text-center">
-                        <div className="text-5xl font-black text-white font-mono tracking-tighter flex items-baseline justify-center gap-2">
-                            {tonBalance.toFixed(2)} <span className="text-lg text-blue-500 font-black">TON</span>
-                        </div>
-                    </div>
-                    <button 
-                        onClick={handleWithdraw} 
-                        disabled={tonBalance < 10 || withdrawing} 
-                        className={`w-full py-5 rounded-2xl font-black text-xs uppercase tracking-[0.2em] flex items-center justify-center gap-3 transition-all active:scale-95 shadow-xl border
-                            ${tonBalance >= 10 ? 'bg-white text-blue-900 border-white hover:bg-slate-200' : 'bg-slate-800/50 text-slate-600 border-slate-800'}
-                        `}
-                    >
+                    <div className="mb-8 text-center"><div className="text-5xl font-black text-white font-mono tracking-tighter flex items-baseline justify-center gap-2">{tonBalance.toFixed(2)} <span className="text-lg text-blue-500 font-black">TON</span></div></div>
+                    <button onClick={handleWithdraw} disabled={tonBalance < 10 || withdrawing} className={`w-full py-5 rounded-2xl font-black text-xs uppercase tracking-[0.2em] flex items-center justify-center gap-3 transition-all active:scale-95 shadow-xl border ${tonBalance >= 10 ? 'bg-white text-blue-900 border-white hover:bg-slate-200' : 'bg-slate-800/50 text-slate-600 border-slate-800'}`}>
                         {withdrawing ? <Loader2 className="animate-spin" size={18}/> : (withdrawSuccess ? "Protocol Complete" : (tonBalance >= 10 ? "Initiate Withdrawal" : "Min 10 TON Required"))}
                     </button>
                     <p className="text-center text-[8px] text-slate-600 mt-4 font-bold uppercase tracking-widest">Safe-Withdrawal Protocol v2.1</p>

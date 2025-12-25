@@ -75,7 +75,7 @@ export const AdsView: React.FC<AdsViewProps> = ({ userLocation, collectedIds, my
 
     const handleVerifyLocation = async () => {
         if (!street || !city || !country) {
-            setGeoError("Vă rugăm să completați Strada, Orașul și Țara.");
+            setGeoError("Please complete Street, City, and Country.");
             return;
         }
         const query = `${street}, ${city}, ${zip}, ${country}`;
@@ -175,16 +175,12 @@ export const AdsView: React.FC<AdsViewProps> = ({ userLocation, collectedIds, my
     };
 
     const calculateAnalytics = (campaign: Campaign) => {
-        // Căutăm orice ID care conține ID-ul campaniei (monede individuale sau hotspot-ul principal)
         const foundCount = collectedIds.filter(id => id.includes(campaign.id)).length;
-        
         const expiryTime = campaign.timestamp + (campaign.durationDays * 24 * 60 * 60 * 1000);
         const remainingMs = expiryTime - Date.now();
         const days = Math.max(0, Math.floor(remainingMs / (1000 * 60 * 60 * 24)));
         const hours = Math.max(0, Math.floor((remainingMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)));
         const isExpired = remainingMs <= 0;
-        
-        // Asigurăm că progresul nu depășește 100%
         const progress = Math.min((foundCount / campaign.count) * 100, 100);
         return { foundCount, days, hours, isExpired, progress };
     };
@@ -199,14 +195,13 @@ export const AdsView: React.FC<AdsViewProps> = ({ userLocation, collectedIds, my
                 </button>
             </div>
 
-            {isTestMode && <div className="bg-amber-600/20 text-amber-400 text-[10px] text-center py-1.5 font-black flex items-center justify-center gap-2 border-b border-amber-600/30 uppercase tracking-widest"><FlaskConical size={10} /> Simulator Mod Active</div>}
+            {isTestMode && <div className="bg-amber-600/20 text-amber-400 text-[10px] text-center py-1.5 font-black flex items-center justify-center gap-2 border-b border-amber-600/30 uppercase tracking-widest"><FlaskConical size={10} /> Simulator Mode Active</div>}
 
             <div className="flex-1 overflow-y-auto p-4 pb-32 bg-slate-950 no-scrollbar">
                 {activeSection === 'create' && (
                     <div className="space-y-6">
-                        {/* BUSINESS SECTION */}
                         <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
-                            <div className="bg-slate-800/50 px-4 py-3 border-b border-slate-800"><h3 className="text-[10px] font-black text-slate-300 flex items-center gap-2 uppercase tracking-widest"><Building size={14} className="text-cyan-400" /> Profil Business</h3></div>
+                            <div className="bg-slate-800/50 px-4 py-3 border-b border-slate-800"><h3 className="text-[10px] font-black text-slate-300 flex items-center gap-2 uppercase tracking-widest"><Building size={14} className="text-cyan-400" /> Business Profile</h3></div>
                             <div className="p-4 space-y-4">
                                 <div><label className="text-[9px] text-slate-500 font-black uppercase mb-1 block tracking-widest">Brand Name *</label><input type="text" value={brandName} onChange={(e) => setBrandName(e.target.value)} placeholder="Your Company" className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-white text-sm focus:border-cyan-500 outline-none" /></div>
                                 <div className="grid grid-cols-2 gap-3">
@@ -214,7 +209,7 @@ export const AdsView: React.FC<AdsViewProps> = ({ userLocation, collectedIds, my
                                     <div><label className="text-[9px] text-slate-500 font-black uppercase mb-1 block">Email</label><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="office@..." className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white text-sm outline-none" /></div>
                                 </div>
                                 <div className="border-t border-slate-800 my-2"></div>
-                                <h4 className="text-[9px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2"><MapPin size={12} className="text-red-500" /> Dropzone Location </h4>
+                                <h4 className="text-[9px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2"><MapPin size={12} className="text-red-500" /> Dropzone Location</h4>
                                 <div className="space-y-3">
                                     <input type="text" value={street} onChange={(e) => setStreet(e.target.value)} placeholder="Street, Nr." className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-white text-sm focus:border-red-500 outline-none" />
                                     <div className="grid grid-cols-2 gap-3">
@@ -245,34 +240,26 @@ export const AdsView: React.FC<AdsViewProps> = ({ userLocation, collectedIds, my
                             </div>
                         </div>
 
-                        {/* CREATIVE SECTION */}
                         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl space-y-4">
                             <h3 className="text-[10px] font-black text-slate-300 flex items-center gap-2 uppercase tracking-widest border-b border-slate-800 pb-2 mb-2"><Video size={14} className="text-purple-400" /> Active Media Assets</h3>
                             <div><label className="text-[9px] text-slate-500 font-black uppercase mb-1 block">Logo Image URL</label><input type="text" placeholder="https://..." value={logoUrl} onChange={(e) => setLogoUrl(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white text-sm outline-none focus:border-purple-500" /></div>
                             <div><label className="text-[9px] text-slate-500 font-black uppercase mb-1 block">Video Campaign URL</label><input type="text" placeholder="https://..." value={videoUrl} onChange={(e) => setVideoUrl(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white text-sm outline-none focus:border-purple-500" /></div>
                         </div>
 
-                        {/* PARAMETERS SECTION */}
                         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl space-y-6">
                             <h3 className="text-[10px] font-black text-slate-300 flex items-center gap-2 uppercase tracking-widest border-b border-slate-800 pb-2 mb-2"><Settings size={14} className="text-amber-400" /> Campaign Configuration</h3>
-                            
                             <div>
                                 <div className="flex justify-between mb-2"><label className="text-[10px] text-slate-400 font-black uppercase tracking-tighter">Coin Drop Quantity</label><span className="text-xs text-white font-mono font-black bg-amber-500/10 text-amber-500 px-2 py-0.5 rounded border border-amber-500/20">{coinCount} Drops</span></div>
                                 <input type="range" min="10" max="2000" step="10" value={coinCount} onChange={(e) => setCoinCount(parseInt(e.target.value))} className="w-full accent-amber-500 h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer" />
                             </div>
-
                             <div>
                                 <label className="text-[10px] text-slate-400 font-black uppercase mb-3 block tracking-tighter">Visibility Multiplier</label>
                                 <div className="grid grid-cols-4 gap-2">
                                     {[5, 10, 20, 50].map(val => (
-                                        <button key={val} onClick={() => setMultiplier(val)} className={`py-2 rounded-xl text-[10px] font-black border transition-all ${multiplier === val ? "bg-amber-500 border-amber-400 text-black shadow-lg shadow-amber-900/20" : "bg-slate-950 border-slate-800 text-slate-500"}`}>
-                                            {val}X
-                                        </button>
+                                        <button key={val} onClick={() => setMultiplier(val)} className={`py-2 rounded-xl text-[10px] font-black border transition-all ${multiplier === val ? "bg-amber-500 border-amber-400 text-black shadow-lg shadow-amber-900/20" : "bg-slate-950 border-slate-800 text-slate-500"}`}>{val}X</button>
                                     ))}
                                 </div>
                             </div>
-
-                            {/* DURATA CAMPANIEI (Restaurată și îmbunătățită vizual) */}
                             <div>
                                 <label className="text-[10px] text-slate-400 font-black uppercase mb-3 block tracking-tighter flex justify-between">
                                     <span>Campaign Duration</span>
@@ -293,12 +280,9 @@ export const AdsView: React.FC<AdsViewProps> = ({ userLocation, collectedIds, my
                             </div>
                         </div>
 
-                        {/* PREMIUM TON CHECKOUT CARD */}
                         <div className="pt-4 pb-12">
                             <div className="bg-slate-900 p-6 rounded-[2.5rem] border-2 border-slate-700 shadow-2xl relative overflow-hidden">
                                 <div className="absolute -right-12 -top-12 bg-cyan-500/10 w-40 h-40 rounded-full blur-3xl"></div>
-                                <div className="absolute -left-12 -bottom-12 bg-purple-500/5 w-40 h-40 rounded-full blur-3xl"></div>
-                                
                                 <div className="relative z-10">
                                     <div className="flex justify-between items-start mb-6">
                                         <div className="flex items-center gap-3">
@@ -308,37 +292,18 @@ export const AdsView: React.FC<AdsViewProps> = ({ userLocation, collectedIds, my
                                                 <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest">Global Drop Protocol</p>
                                             </div>
                                         </div>
-                                        <div className="text-right">
-                                            <span className="text-[8px] text-slate-500 font-black uppercase block mb-1">Fee Type</span>
-                                            <span className="text-[10px] text-cyan-400 font-bold uppercase bg-cyan-500/10 px-2 py-0.5 rounded-md">Smart Contract</span>
-                                        </div>
                                     </div>
-
                                     <div className="space-y-3 mb-6">
                                         <div className="flex justify-between text-xs font-bold"><span className="text-slate-500 uppercase">Tokens Allocation</span><span className="text-white">{coinCount} Coins</span></div>
                                         <div className="flex justify-between text-xs font-bold"><span className="text-slate-500 uppercase">Visibility Multiplier</span><span className="text-white">x{multiplier} Boost</span></div>
-                                        <div className="flex justify-between text-xs font-bold"><span className="text-slate-500 uppercase">Ad Duration</span><span className="text-white">{duration} Zile</span></div>
+                                        <div className="flex justify-between text-xs font-bold"><span className="text-slate-500 uppercase">Ad Duration</span><span className="text-white">{duration} Days</span></div>
                                         <div className="border-t border-slate-800 my-4 pt-4 flex justify-between items-end">
-                                            <div>
-                                                <span className="text-[10px] text-slate-500 font-black uppercase block tracking-tighter">Grand Total Cost</span>
-                                                <span className="text-xs text-cyan-500 font-mono font-bold">Network Priority High</span>
-                                            </div>
-                                            <div className="text-right">
-                                                <span className="text-4xl font-black text-white font-[Rajdhani]">{pricing.total}</span>
-                                                <span className="text-lg font-black text-cyan-500 ml-1.5 uppercase font-[Rajdhani]">TON</span>
-                                            </div>
+                                            <span className="text-4xl font-black text-white font-[Rajdhani]">{pricing.total} <span className="text-lg text-cyan-500 ml-1.5 uppercase">TON</span></span>
                                         </div>
                                     </div>
-
-                                    <button 
-                                        onClick={handleSubmitApp} 
-                                        disabled={isSubmitting || !resolvedLocation} 
-                                        className="w-full py-4.5 bg-white text-black hover:bg-slate-200 disabled:opacity-50 font-black rounded-2xl flex items-center justify-center gap-3 transition-all active:scale-[0.98] shadow-[0_0_30px_rgba(255,255,255,0.15)] uppercase tracking-widest text-sm"
-                                    >
-                                        {isSubmitting ? <Loader2 className="animate-spin" /> : <Megaphone size={20} />}
-                                        Submit Campaign
+                                    <button onClick={handleSubmitApp} disabled={isSubmitting || !resolvedLocation} className="w-full py-4.5 bg-white text-black hover:bg-slate-200 disabled:opacity-50 font-black rounded-2xl flex items-center justify-center gap-3 transition-all active:scale-[0.98] shadow-[0_0_30px_rgba(255,255,255,0.15)] uppercase tracking-widest text-sm">
+                                        {isSubmitting ? <Loader2 className="animate-spin" /> : <Megaphone size={20} />} Submit Campaign
                                     </button>
-                                    
                                     <p className="text-center text-[8px] text-slate-600 mt-4 font-bold uppercase tracking-widest">Approved ads appear globally within 12-24 hours</p>
                                 </div>
                             </div>
@@ -349,7 +314,7 @@ export const AdsView: React.FC<AdsViewProps> = ({ userLocation, collectedIds, my
                 {activeSection === 'manage' && (
                     <div className="space-y-4">
                         {myCampaigns.length === 0 ? (
-                            <div className="text-center text-slate-500 mt-20"><Megaphone className="mx-auto mb-4 opacity-10" size={64} /><p className="text-sm font-black uppercase tracking-widest">Nicio campanie detectată</p></div>
+                            <div className="text-center text-slate-500 mt-20"><Megaphone className="mx-auto mb-4 opacity-10" size={64} /><p className="text-sm font-black uppercase tracking-widest">No campaigns detected</p></div>
                         ) : (
                             myCampaigns.map(camp => {
                                 const stats = calculateAnalytics(camp);
@@ -358,7 +323,7 @@ export const AdsView: React.FC<AdsViewProps> = ({ userLocation, collectedIds, my
                                         <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-800/20">
                                             <div className="flex items-center gap-3">
                                                 <div className="w-10 h-10 rounded-xl bg-black/50 overflow-hidden border border-slate-700 shadow-inner">
-                                                    <img src={camp.data.logoUrl} alt="Logo" className="w-full h-full object-cover" onError={(e) => e.currentTarget.style.display='none'} />
+                                                    <img src={camp.data.logoUrl} alt="Logo" className="w-full h-full object-cover" />
                                                 </div>
                                                 <div>
                                                     <h3 className="font-black text-white text-sm uppercase tracking-tighter leading-none">{camp.data.brandName}</h3>
@@ -374,7 +339,6 @@ export const AdsView: React.FC<AdsViewProps> = ({ userLocation, collectedIds, my
                                                 {camp.data.status.replace('_', ' ')}
                                             </div>
                                         </div>
-
                                         <div className="p-5">
                                             {camp.data.status === AdStatus.ACTIVE && (
                                                 <div className="mb-4">
@@ -386,40 +350,30 @@ export const AdsView: React.FC<AdsViewProps> = ({ userLocation, collectedIds, my
                                                         <div className="h-full bg-gradient-to-r from-cyan-600 to-blue-500 transition-all duration-1000" style={{ width: `${stats.progress}%` }}></div>
                                                     </div>
                                                     <div className="flex justify-between mt-3">
-                                                        <div className="flex flex-col"><span className="text-[8px] text-slate-600 font-black uppercase">Time Remaining</span><span className="text-[10px] text-white font-bold">{stats.isExpired ? 'EXPIRAT' : `${stats.days}z ${stats.hours}o`}</span></div>
+                                                        <div className="flex flex-col"><span className="text-[8px] text-slate-600 font-black uppercase">Time Remaining</span><span className="text-[10px] text-white font-bold">{stats.isExpired ? 'EXPIRED' : `${stats.days}d ${stats.hours}h`}</span></div>
                                                         <div className="flex flex-col items-end"><span className="text-[8px] text-slate-600 font-black uppercase">Protocol</span><span className="text-[10px] text-cyan-400 font-black uppercase">Tier x{camp.multiplier}</span></div>
                                                     </div>
                                                 </div>
                                             )}
-
                                             <div className="flex justify-between text-xs mb-5 p-3 bg-black/40 rounded-2xl border border-white/5 items-center">
                                                 <div>
-                                                    <span className="text-slate-500 font-black uppercase text-[9px] block mb-0.5 tracking-widest">Preț Campanie</span>
-                                                    <span className="text-[10px] text-slate-400 font-bold">{camp.durationDays} Zile • Global</span>
+                                                    <span className="text-slate-500 font-black uppercase text-[9px] block mb-0.5 tracking-widest">Campaign Fee</span>
+                                                    <span className="text-[10px] text-slate-400 font-bold">{camp.durationDays} Days • Global</span>
                                                 </div>
                                                 <div className="text-right">
                                                     <span className="text-amber-400 font-black text-lg font-[Rajdhani]">{camp.totalPrice}</span>
                                                     <span className="text-[10px] font-black text-amber-500/80 ml-1">TON</span>
                                                 </div>
                                             </div>
-
                                             {camp.data.status === AdStatus.PAYMENT_REQUIRED && (
-                                                <button 
-                                                    onClick={() => handlePayment(camp)} 
-                                                    disabled={isPaying === camp.id} 
-                                                    className="w-full py-3.5 bg-gradient-to-r from-cyan-600 to-blue-600 text-white font-black rounded-2xl flex items-center justify-center gap-3 hover:shadow-[0_0_25px_rgba(6,182,212,0.4)] transition-all active:scale-[0.98] uppercase tracking-widest text-xs"
-                                                >
-                                                    {isPaying === camp.id ? <Loader2 className="animate-spin" /> : <Wallet size={18} />}
-                                                    {isTestMode ? "Simulează Plata (Test)" : `Plătește ${camp.totalPrice} TON`}
+                                                <button onClick={() => handlePayment(camp)} disabled={isPaying === camp.id} className="w-full py-3.5 bg-gradient-to-r from-cyan-600 to-blue-600 text-white font-black rounded-2xl flex items-center justify-center gap-3 hover:shadow-[0_0_25px_rgba(6,182,212,0.4)] transition-all active:scale-[0.98] uppercase tracking-widest text-xs">
+                                                    {isPaying === camp.id ? <Loader2 className="animate-spin" /> : <Wallet size={18} />} {isTestMode ? "Simulate Payment (Test)" : `Pay ${camp.totalPrice} TON`}
                                                 </button>
                                             )}
-
                                             {camp.data.status === AdStatus.PENDING_REVIEW && (
                                                 <div className="bg-amber-500/5 border border-amber-500/20 p-3 rounded-2xl flex items-center gap-3">
                                                     <Clock className="text-amber-500" size={20} />
-                                                    <p className="text-[9px] text-amber-200/70 font-bold uppercase leading-relaxed tracking-wide">
-                                                        Cererea ta este în curs de revizuire. Vei primi un nod de plată imediat după aprobare.
-                                                    </p>
+                                                    <p className="text-[9px] text-amber-200/70 font-bold uppercase leading-relaxed tracking-wide">Your request is under review. You will receive a payment node immediately after approval.</p>
                                                 </div>
                                             )}
                                         </div>

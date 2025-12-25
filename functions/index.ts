@@ -62,7 +62,7 @@ export const chatWithELZR = onCall(async (request) => {
     return { text: response.text };
 });
 
-// CLAIM PROCESSOR (Hardened)
+// CLAIM PROCESSOR (Strict Walking Speed Enforcement)
 export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event) => {
     const snap = event.data;
     if (!snap) return;
@@ -80,8 +80,7 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
 
     if (userData.isBanned) return;
 
-    // SECURITY: Verificare server-side a protocolului biometric
-    // Dacă utilizatorul are biometria activată (default), dar challenge-ul lipsește, blocăm colectarea.
+    // SECURITY: Biometric protocol check
     if (userData.biometricEnabled !== false && !claim.challenge) {
         await snap.ref.update({ status: 'flagged', reason: 'Biometric bypass attempt' });
         return;
@@ -99,13 +98,25 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
         }
     }
 
-    // Velocity Check (REDUȘ de la 250 la 50 conform auditului)
+    // VELOCITY CHECK: Restricted to WALKING/RUNNING speed only (Max 6 m/s = 21.6 km/h)
+    // This strictly blocks cars, scooters, bikes, and teleportation.
     if (userData.lastLocation && userData.lastActive) {
         const distTraveled = getDistance(userData.lastLocation.lat, userData.lastLocation.lng, claim.location.lat, claim.location.lng);
         const timeDiff = (Timestamp.now().toMillis() - userData.lastActive.toMillis()) / 1000;
-        if (timeDiff > 2 && (distTraveled / timeDiff) > 50) { // Max 180 km/h
-            await snap.ref.update({ status: 'flagged', reason: 'Anomalous velocity detected' });
-            return;
+        
+        if (timeDiff > 2) {
+            const velocity = distTraveled / timeDiff;
+            if (velocity > 6) { 
+                await snap.ref.update({ 
+                    status: 'flagged', 
+                    reason: `High velocity detected: ${velocity.toFixed(2)}m/s. Walking/Running only.` 
+                });
+                // Auto-ban can be implemented here if velocity is extreme (teleportation)
+                if (velocity > 100) {
+                    await userRef.update({ isBanned: true, banReason: 'Teleportation/GPS Spoofing' });
+                }
+                return;
+            }
         }
     }
 
