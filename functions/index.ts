@@ -13,7 +13,6 @@ if (getApps().length === 0) {
 const db = getFirestore();
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 
-// SECURITY 6.0: Filtru anti-Prompt Injection
 function sanitizeAiInput(messages: any[]) {
     const forbiddenPatterns = [/ignore/i, /system/i, /instruction/i, /database/i, /coordinates/i, /secret/i];
     return messages.map(m => ({
@@ -47,7 +46,7 @@ function validateTelegramAuth(initData: string) {
     return hash === calculatedHash;
 }
 
-// 1. AI PROXY (Hardened)
+// AI PROXY
 export const chatWithELZR = onCall(async (request) => {
     const data = request.data;
     if (!validateTelegramAuth(data.initData)) {
@@ -63,7 +62,7 @@ export const chatWithELZR = onCall(async (request) => {
     return { text: response.text };
 });
 
-// 2. CLAIM PROCESSOR (Challenge Verified)
+// CLAIM PROCESSOR (Hardened)
 export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event) => {
     const snap = event.data;
     if (!snap) return;
@@ -79,24 +78,33 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
     if (!userDoc.exists) return;
     const userData = userDoc.data()!;
 
+    if (userData.isBanned) return;
+
+    // SECURITY: Verificare server-side a protocolului biometric
+    // Dacă utilizatorul are biometria activată (default), dar challenge-ul lipsește, blocăm colectarea.
+    if (userData.biometricEnabled !== false && !claim.challenge) {
+        await snap.ref.update({ status: 'flagged', reason: 'Biometric bypass attempt' });
+        return;
+    }
+
     // Challenge Verification (Anti-AR Botting)
     if (claim.challenge) {
         if (claim.challenge.reactionTimeMs < 500) {
             await snap.ref.update({ status: 'flagged', reason: 'Impossible reaction time' });
             return;
         }
-        if (claim.challenge.finalDistance > 6) {
+        if (claim.challenge.finalDistance > 7) {
             await snap.ref.update({ status: 'failed', reason: 'Out of AR range' });
             return;
         }
     }
 
-    // Velocity Check (Incluzând App Launch Anchor)
+    // Velocity Check (REDUȘ de la 250 la 50 conform auditului)
     if (userData.lastLocation && userData.lastActive) {
         const distTraveled = getDistance(userData.lastLocation.lat, userData.lastLocation.lng, claim.location.lat, claim.location.lng);
         const timeDiff = (Timestamp.now().toMillis() - userData.lastActive.toMillis()) / 1000;
-        if (timeDiff > 0 && (distTraveled / timeDiff) > 250) {
-            await snap.ref.update({ status: 'flagged', reason: 'High velocity detected' });
+        if (timeDiff > 2 && (distTraveled / timeDiff) > 50) { // Max 180 km/h
+            await snap.ref.update({ status: 'flagged', reason: 'Anomalous velocity detected' });
             return;
         }
     }
@@ -107,7 +115,9 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
     const realValue = hotspotSnap.data()!.baseValue || 100;
 
     await db.runTransaction(async (transaction) => {
-        if (userData.collectedIds?.includes(claim.spawnId)) return;
+        const freshUserDoc = await transaction.get(userRef);
+        if (freshUserDoc.data()?.collectedIds?.includes(claim.spawnId)) return;
+        
         transaction.update(userRef, {
             balance: FieldValue.increment(realValue),
             collectedIds: FieldValue.arrayUnion(claim.spawnId),
@@ -118,7 +128,6 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
     });
 });
 
-// 3. SECURE AD REWARD
 export const onAdClaimCreated = onDocumentCreated('ad_claims/{claimId}', async (event) => {
     const snap = event.data;
     if (!snap) return;
