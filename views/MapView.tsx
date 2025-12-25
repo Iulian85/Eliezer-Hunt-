@@ -79,8 +79,15 @@ const createIndividualCoinIcon = () => L.divIcon({
     iconAnchor: [12, 12]
 });
 
-const MapEventsHandler = ({ onBoundsChange }: { onBoundsChange: (bounds: any, zoom: number) => void }) => {
-    const map = useMapEvents({
+const MapEventsHandler = ({ onBoundsChange }: { onBoundsChange: (bounds: L.LatLngBounds, zoom: number) => void }) => {
+    const map = useMap();
+    
+    // Initial bounds set when map ready
+    useEffect(() => {
+        onBoundsChange(map.getBounds(), map.getZoom());
+    }, [map]);
+
+    useMapEvents({
         moveend: () => onBoundsChange(map.getBounds(), map.getZoom()),
         zoomend: () => onBoundsChange(map.getBounds(), map.getZoom())
     });
@@ -98,14 +105,26 @@ export const MapView: React.FC<MapViewProps> = ({ location, spawns, collectedIds
 
     const visibleSpawns = useMemo(() => {
         if (!bounds) return [];
-        const mapBounds = { north: bounds.getNorth(), south: bounds.getSouth(), east: bounds.getEast(), west: bounds.getWest() };
+        const mapBounds = { 
+            north: bounds.getNorth(), 
+            south: bounds.getSouth(), 
+            east: bounds.getEast(), 
+            west: bounds.getWest() 
+        };
         const procedural = generateProceduralSpawns(mapBounds, zoom, hotspots);
         return procedural.filter(s => !collectedIds.includes(s.id));
     }, [bounds, zoom, collectedIds, hotspots]);
 
     return (
         <div className="h-full w-full relative">
-            <MapContainer center={[location.lat, location.lng]} zoom={18} className="h-full w-full bg-slate-950" zoomControl={false}>
+            <MapContainer 
+                center={[location.lat, location.lng]} 
+                zoom={18} 
+                className="h-full w-full bg-slate-950" 
+                zoomControl={false}
+                // Removed redundant and incorrectly typed whenReady prop.
+                // Initial bounds are already set via MapEventsHandler child component.
+            >
                 <MapEventsHandler onBoundsChange={handleBoundsChange} />
                 <RecenterMap location={location} />
                 <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" />
