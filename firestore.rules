@@ -3,34 +3,51 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // Reguli pentru colecția Users
-    match /users/{userId} {
-      // Citire permisă oricui (pentru leaderboard), dar în producție limitează la autentificați
-      allow read: if true;
-      
-      // Scriere permisă DOAR pentru propriul profil
-      // Important: Interzicem modificarea manuală a 'isBanned' din client
-      allow write: if request.resource.data.isBanned == resource.data.isBanned
-                   && request.resource.data.balance >= resource.data.balance;
-    }
-    
-    // Colecție de cereri de colectare (pentru verificare server-side)
-    match /claims/{claimId} {
-      allow create: if request.auth != null || true; // Validare HMAC ulterioară
-      allow read, update, delete: if false; // Doar un Admin sau Cloud Function poate procesa
+    // Funcție de ajutor pentru a verifica dacă se încearcă modificarea câmpurilor protejate
+    function isChangingProtectedFields() {
+      return request.resource.data.balance != resource.data.balance ||
+             request.resource.data.tonBalance != resource.data.tonBalance ||
+             request.resource.data.isBanned != resource.data.isBanned ||
+             request.resource.data.referrals != resource.data.referrals ||
+             request.resource.data.deviceFingerprint != resource.data.deviceFingerprint;
     }
 
-    // Colecție de retrageri - doar creare
+    match /users/{userId} {
+      allow read: if true;
+      
+      // Utilizatorul poate crea profilul inițial (doar dacă are balanță 0)
+      allow create: if request.resource.data.balance == 0 
+                    && request.resource.data.tonBalance == 0;
+      
+      // Utilizatorul poate actualiza DOAR câmpurile de profil, NU și balanța
+      allow update: if request.auth == null // În Mini App nu avem Firebase Auth implicit
+                    && !isChangingProtectedFields()
+                    && (request.resource.data.lastActive >= resource.data.lastActive);
+                    
+      allow delete: if false;
+    }
+    
+    match /claims/{claimId} {
+      // Permitem doar crearea de cereri noi. 
+      // Odată create, nu mai pot fi modificate sau șterse de utilizator.
+      allow create: if request.resource.data.status == "pending_verification";
+      allow read, update, delete: if false;
+    }
+
     match /withdrawal_requests/{reqId} {
-      allow create: if true;
+      allow create: if request.resource.data.status == "pending_review";
       allow read, update, delete: if false;
     }
     
-    // Campanii - vizibile oricui, create de business owners
     match /campaigns/{campId} {
       allow read: if true;
       allow create: if true;
-      allow update, delete: if false; // Doar Admin poate modifica statusul campaniei
+      allow update, delete: if false;
+    }
+    
+    match /hotspots/{hId} {
+      allow read: if true;
+      allow write: if false; // Doar Admin via Dashboard (care folosește o altă metodă sau Admin SDK)
     }
   }
 }

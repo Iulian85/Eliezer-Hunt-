@@ -1,10 +1,11 @@
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { Coordinate, SpawnPoint, HotspotDefinition } from '../types';
 import { getDistance } from '../utils';
-import { MAX_INTERACTION_DISTANCE, NEARBY_SEARCH_RADIUS } from '../constants';
+import { NEARBY_SEARCH_RADIUS } from '../constants';
 import { Coin3D } from '../components/Coin3D';
-import { LocateFixed, Navigation, Rocket, Crown, Gift, Megaphone } from 'lucide-react';
+import { LocateFixed, Navigation, Rocket, Crown, Gift, Megaphone, ShieldAlert } from 'lucide-react';
 import { ARView } from './ARView';
 
 const AmbientLight = 'ambientLight' as any;
@@ -56,7 +57,6 @@ export const HuntView: React.FC<HuntViewProps> = ({ location, spawns, collectedI
         if (closest) {
             setNearestSpawn({ spawn: closest, dist: minDesc });
         } else {
-            // Keep the previous one if in AR mode to prevent component flicker and premature exit
             if (!arMode) setNearestSpawn(null);
         }
     }, [location, allAvailableTargets, collectedIds, arMode]);
@@ -64,21 +64,9 @@ export const HuntView: React.FC<HuntViewProps> = ({ location, spawns, collectedI
     const handleARCollect = (points: number, tonReward: number = 0) => {
         if (nearestSpawn) {
             onCollect(nearestSpawn.spawn.id, points, nearestSpawn.spawn.category);
-            // We DO NOT call setArMode(false) here so the user stays in AR.
-            // The useEffect above will automatically pick the next nearest spawn
-            // once the current one is added to collectedIds.
         }
     };
 
-    const handleStandardCollect = () => {
-         if (nearestSpawn) {
-            onCollect(nearestSpawn.spawn.id, Math.floor(nearestSpawn.spawn.value), nearestSpawn.spawn.category);
-            setNearestSpawn(null);
-        }
-    };
-
-    // If arMode is active, we return the ARView. 
-    // This component will stay mounted as long as arMode is true.
     if (arMode) {
         return <ARView target={nearestSpawn} onClose={() => setArMode(false)} onCollect={handleARCollect} />;
     }
@@ -162,11 +150,10 @@ export const HuntView: React.FC<HuntViewProps> = ({ location, spawns, collectedI
                         {nearestSpawn.dist < 200 ? "Start AR Hunt" : "Too Far To Hunt"}
                     </button>
                     
-                    {nearestSpawn.dist <= MAX_INTERACTION_DISTANCE && (
-                        <button onClick={handleStandardCollect} className="w-full py-2 bg-slate-800/30 text-slate-500 text-[9px] font-black uppercase rounded-lg hover:bg-slate-800 transition-colors tracking-[0.3em]">
-                            Quick Collect (2D)
-                        </button>
-                    )}
+                    <div className="flex items-center justify-center gap-2 mt-2 py-2 px-4 bg-slate-800/20 rounded-xl border border-slate-800/40">
+                        <ShieldAlert size={12} className="text-slate-500" />
+                        <span className="text-[8px] text-slate-600 font-black uppercase tracking-widest">Mandatory AR Extraction Required</span>
+                    </div>
                 </div>
             ) : (
                 <div className="text-center text-slate-500 mt-10">
