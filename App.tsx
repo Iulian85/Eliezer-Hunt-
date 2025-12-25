@@ -110,7 +110,6 @@ function App() {
         const initUser = async () => {
             const tg = window.Telegram?.WebApp;
             
-            // Strict environment check: Must have Telegram object and valid user data
             if (!tg || !tg.initDataUnsafe || !tg.initDataUnsafe.user) {
                 setIsTelegram(false);
                 setIsLoading(false);
@@ -122,7 +121,6 @@ function App() {
             if (tg.disableVerticalSwipes) tg.disableVerticalSwipes();
             setIsTelegram(true);
 
-            // Native Telegram Biometric Manager Initialization
             if (tg.BiometricManager) {
                 tg.BiometricManager.init(() => {
                     setBiometricSupported(tg.BiometricManager.available);
@@ -190,7 +188,6 @@ function App() {
     }, []);
 
     const handleUnlock = async () => {
-        // Bypass for biometric disabled users (Global Admin or specific accounts)
         if (userState.biometricEnabled === false) {
             setIsUnlocked(true);
             return;
@@ -200,8 +197,6 @@ function App() {
         const bm = tg?.BiometricManager;
 
         if (!bm || !bm.available) {
-            // Fix: Removed redundant check for biometricEnabled === false as it's already handled above
-            // This prevents a TypeScript error regarding overlapping types.
             if (isAdmin) {
                 setIsUnlocked(true);
                 return;
@@ -308,41 +303,27 @@ function App() {
         );
     }
 
-    // Restriction screen for non-Telegram environments
     if (!isTelegram) {
         return (
             <div className="h-screen w-screen bg-[#020617] flex flex-col items-center justify-center p-8 text-center relative overflow-hidden">
                 <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(6,182,212,0.1),transparent)] pointer-events-none"></div>
-                
                 <div className="relative z-10 max-w-xs flex flex-col items-center">
                     <div className="w-24 h-24 bg-cyan-600/10 rounded-[2.5rem] flex items-center justify-center border-2 border-cyan-600/30 mb-10 shadow-[0_0_50px_rgba(6,182,212,0.15)]">
                         <SmartphoneNfc className="text-cyan-400" size={48} />
                     </div>
-                    
                     <h1 className="text-3xl font-black text-white mb-4 uppercase tracking-tighter font-[Rajdhani]">Access Restricted</h1>
                     <p className="text-slate-400 text-xs font-medium leading-relaxed mb-10 uppercase tracking-widest">
                         Eliezer Hunt is a specialized Telegram Mini App protocol. Please launch via the official Telegram bot to synchronize your extraction node.
                     </p>
-                    
-                    <a 
-                        href="https://t.me/Obadiah_Bot/eliezer"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="w-full py-5 bg-white text-black font-black text-sm uppercase tracking-[0.2em] rounded-[1.5rem] flex items-center justify-center gap-3 shadow-xl hover:bg-slate-200 transition-all active:scale-95"
-                    >
-                        <Send size={20} />
-                        Open in Telegram
+                    <a href="https://t.me/Obadiah_Bot/eliezer" target="_blank" rel="noopener noreferrer" className="w-full py-5 bg-white text-black font-black text-sm uppercase tracking-[0.2em] rounded-[1.5rem] flex items-center justify-center gap-3 shadow-xl hover:bg-slate-200 transition-all active:scale-95">
+                        <Send size={20} /> Open in Telegram
                     </a>
-                    
-                    <p className="mt-8 text-[9px] text-slate-600 font-black uppercase tracking-[0.3em]">
-                        Mobile Protocol v5.2 • Secure Connection Only
-                    </p>
+                    <p className="mt-8 text-[9px] text-slate-600 font-black uppercase tracking-[0.3em]">Mobile Protocol v5.2 • Secure Connection Only</p>
                 </div>
             </div>
         );
     }
 
-    // Security screen - Bypassable only by the Global Admin to allow fixing user settings
     if (isBlocked && !isAdmin) {
         return (
             <div className="h-screen w-screen bg-slate-950 flex flex-col items-center justify-center p-8 text-center">
@@ -363,25 +344,20 @@ function App() {
         );
     }
 
-    // Secure Gateway Screen
     if (!isUnlocked && (!isBlocked || !isAdmin)) {
         return (
             <div className="h-screen w-screen bg-[#020617] flex flex-col items-center justify-center p-8 relative overflow-hidden">
                 <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(6,182,212,0.1),transparent)] pointer-events-none"></div>
-                
                 <div className="relative z-10 flex flex-col items-center max-w-xs w-full">
                     <div className="mb-12 text-center">
                         <h2 className="text-[10px] text-cyan-500 font-black uppercase tracking-[0.4em] mb-2">Secure Gateway</h2>
                         <h1 className="text-4xl font-black text-white uppercase tracking-tighter font-[Rajdhani]">ELIEZER</h1>
                     </div>
-
                     <div className="relative mb-12">
                         <div className={`w-32 h-32 rounded-[2.5rem] bg-slate-900 border-2 flex items-center justify-center transition-all duration-700 shadow-2xl ${isAuthenticating ? 'border-cyan-500 shadow-cyan-500/20' : 'border-slate-800 shadow-black'}`}>
                             <Fingerprint size={56} className={isAuthenticating ? "text-cyan-400 animate-pulse" : "text-slate-600"} />
                         </div>
-                        {isAuthenticating && (
-                            <div className="absolute top-0 left-0 w-full h-1 bg-cyan-500/50 animate-scan"></div>
-                        )}
+                        {isAuthenticating && <div className="absolute top-0 left-0 w-full h-1 bg-cyan-500/50 animate-scan"></div>}
                         {biometricSupported === false && !isAuthenticating && (
                             <div className="absolute -bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-1.5 whitespace-nowrap bg-amber-500/10 px-3 py-1 rounded-full border border-amber-500/30">
                                 <ShieldQuestion size={10} className="text-amber-500" />
@@ -389,127 +365,38 @@ function App() {
                             </div>
                         )}
                     </div>
-
                     <div className="text-center mb-10 space-y-2">
-                        <p className="text-sm font-bold text-white uppercase tracking-widest">
-                            {isNewUser ? "Device Registration" : "Authentication Required"}
-                        </p>
+                        <p className="text-sm font-bold text-white uppercase tracking-widest">{isNewUser ? "Device Registration" : "Authentication Required"}</p>
                         <p className="text-[10px] text-slate-500 uppercase font-black tracking-widest leading-relaxed">
-                            {isNewUser 
-                                ? "Register your native biometric identity to secure this extraction node." 
-                                : "Scanning device signature for biometric match..."}
+                            {isNewUser ? "Register your native biometric identity to secure this extraction node." : "Scanning device signature for biometric match..."}
                         </p>
                     </div>
-
-                    <button 
-                        onClick={handleUnlock}
-                        disabled={isAuthenticating}
-                        className={`w-full py-5 rounded-[1.5rem] font-black text-sm uppercase tracking-[0.2em] flex items-center justify-center gap-3 transition-all active:scale-95 shadow-xl ${isAuthenticating ? 'bg-slate-800 text-slate-500' : 'bg-white text-black hover:bg-slate-200 shadow-white/10'}`}
-                    >
-                        {isAuthenticating ? (
-                            <>
-                                <Loader2 size={20} className="animate-spin" />
-                                SCANNING...
-                            </>
-                        ) : (
-                            <>
-                                <Lock size={20} />
-                                UNLOCK ENTRY
-                            </>
-                        )}
+                    <button onClick={handleUnlock} disabled={isAuthenticating} className={`w-full py-5 rounded-[1.5rem] font-black text-sm uppercase tracking-[0.2em] flex items-center justify-center gap-3 transition-all active:scale-95 shadow-xl ${isAuthenticating ? 'bg-slate-800 text-slate-500' : 'bg-white text-black hover:bg-slate-200 shadow-white/10'}`}>
+                        {isAuthenticating ? <><Loader2 size={20} className="animate-spin" /> SCANNING...</> : <><Lock size={20} /> UNLOCK ENTRY</>}
                     </button>
-                    
-                    <p className="mt-8 text-[8px] text-slate-700 font-black uppercase tracking-widest">
-                        Telegram Native Protocol v5.2 • Global Biometric Enabled
-                    </p>
+                    <p className="mt-8 text-[8px] text-slate-700 font-black uppercase tracking-widest">Telegram Native Protocol v5.2 • Global Biometric Enabled</p>
                 </div>
-
-                <style>{`
-                    @keyframes scan {
-                        0% { transform: translateY(0); opacity: 0; }
-                        50% { opacity: 1; }
-                        100% { transform: translateY(128px); opacity: 0; }
-                    }
-                    .animate-scan {
-                        animation: scan 1.5s ease-in-out infinite;
-                    }
-                `}</style>
+                <style>{`@keyframes scan { 0% { transform: translateY(0); opacity: 0; } 50% { opacity: 1; } 100% { transform: translateY(128px); opacity: 0; } } .animate-scan { animation: scan 1.5s ease-in-out infinite; }`}</style>
             </div>
         );
     }
 
     return (
         <div className="h-[100dvh] w-screen bg-slate-950 text-white flex flex-col relative overflow-hidden">
-            {/* Main view container: overflow-y-auto enables scrolling for the current tab content */}
             <div className="flex-1 relative overflow-y-auto no-scrollbar scroll-smooth">
                 {activeTab === Tab.MAP && <MapView location={userState.location || DEFAULT_LOCATION} spawns={spawns} collectedIds={userState.collectedIds} hotspots={allHotspots} />}
                 {activeTab === Tab.HUNT && <HuntView location={userState.location || DEFAULT_LOCATION} spawns={spawns} collectedIds={userState.collectedIds} onCollect={handleCollect} hotspots={allHotspots} />}
                 {activeTab === Tab.LEADERBOARD && <LeaderboardView />}
-                {activeTab === Tab.WALLET && (
-                    <WalletView 
-                        userState={userState}
-                        onAdReward={(amt) => handleCollect('ad-' + Date.now(), amt, 'AD_REWARD')} 
-                        onInvite={handleInvite} 
-                    />
-                )}
+                {activeTab === Tab.WALLET && <WalletView userState={userState} onAdReward={(amt) => handleCollect('ad-' + Date.now(), amt, 'AD_REWARD')} onInvite={handleInvite} />}
                 {activeTab === Tab.FRENS && <FrensView referralCount={userState.referrals} referralNames={userState.referralNames} onInvite={handleInvite} />}
-                {activeTab === Tab.ADS && (
-                    <AdsView 
-                        userLocation={userState.location} 
-                        collectedIds={userState.collectedIds}
-                        myCampaigns={campaigns.filter(c => c.ownerWallet === userWalletAddress)} 
-                        onSubmitApplication={async (coords, count, mult, price, data) => {
-                            const camp: Campaign = { 
-                                id: `camp-${Date.now()}`, 
-                                ownerWallet: userWalletAddress || 'anon', 
-                                targetCoords: coords, 
-                                count, 
-                                multiplier: mult, 
-                                durationDays: data.durationDays, 
-                                totalPrice: price, 
-                                data: { ...data, status: AdStatus.PENDING_REVIEW }, 
-                                timestamp: Date.now() 
-                            };
-                            await createCampaignFirebase(camp);
-                        }} 
-                        onPayCampaign={(id) => updateCampaignStatusFirebase(id, AdStatus.ACTIVE)} 
-                        isTestMode={isTestMode} 
-                    />
-                )}
-                {activeTab === Tab.ADMIN && (
-                    <AdminView 
-                        allCampaigns={campaigns} 
-                        customHotspots={customHotspots} 
-                        onSaveHotspots={async (newHotspots) => {
-                            for (const h of newHotspots) await saveHotspotFirebase(h);
-                        }} 
-                        onDeleteHotspot={async (id) => {
-                            await deleteHotspotFirebase(id);
-                        }}
-                        onDeleteCampaign={async (id) => {
-                            await deleteCampaignFirebase(id);
-                        }}
-                        onApprove={(id) => updateCampaignStatusFirebase(id, AdStatus.ACTIVE)} 
-                        onReject={(id) => updateCampaignStatusFirebase(id, AdStatus.REJECTED)} 
-                        onResetMyAccount={handleResetAccount} 
-                        isTestMode={isTestMode} 
-                        onToggleTestMode={() => setIsTestMode(!isTestMode)} 
-                    />
-                )}
+                {activeTab === Tab.ADS && <AdsView userLocation={userState.location} collectedIds={userState.collectedIds} myCampaigns={campaigns.filter(c => c.ownerWallet === userWalletAddress)} onSubmitApplication={async (coords, count, mult, price, data) => {
+                    const camp: Campaign = { id: `camp-${Date.now()}`, ownerWallet: userWalletAddress || 'anon', targetCoords: coords, count, multiplier: mult, durationDays: data.durationDays, totalPrice: price, data: { ...data, status: AdStatus.PENDING_REVIEW }, timestamp: Date.now() };
+                    await createCampaignFirebase(camp);
+                }} onPayCampaign={(id) => updateCampaignStatusFirebase(id, AdStatus.ACTIVE)} isTestMode={isTestMode} />}
+                {activeTab === Tab.ADMIN && <AdminView allCampaigns={campaigns} customHotspots={customHotspots} onSaveHotspots={async (newHotspots) => { for (const h of newHotspots) await saveHotspotFirebase(h); }} onDeleteHotspot={deleteHotspotFirebase} onDeleteCampaign={deleteCampaignFirebase} onApprove={(id) => updateCampaignStatusFirebase(id, AdStatus.ACTIVE)} onReject={(id) => updateCampaignStatusFirebase(id, AdStatus.REJECTED)} onResetMyAccount={handleResetAccount} isTestMode={isTestMode} onToggleTestMode={() => setIsTestMode(!isTestMode)} />}
             </div>
-
-            {(activeTab === Tab.MAP || activeTab === Tab.HUNT) && (
-                <button 
-                    onClick={() => setShowAIChat(true)}
-                    className="fixed right-6 bottom-24 z-[999] w-12 h-12 bg-cyan-600 rounded-full flex items-center justify-center shadow-[0_0_25px_rgba(6,182,212,0.6)] border border-cyan-400 animate-bounce transition-transform active:scale-90"
-                >
-                    <Sparkles className="text-white" size={20} />
-                </button>
-            )}
-
+            {(activeTab === Tab.MAP || activeTab === Tab.HUNT) && <button onClick={() => setShowAIChat(true)} className="fixed right-6 bottom-24 z-[999] w-12 h-12 bg-cyan-600 rounded-full flex items-center justify-center shadow-[0_0_25px_rgba(6,182,212,0.6)] border border-cyan-400 animate-bounce transition-transform active:scale-90"><Sparkles className="text-white" size={20} /></button>}
             {showAIChat && <AIChat onClose={() => setShowAIChat(false)} />}
-
-            {/* Nav container uses shrink-0 to prevent being compressed, padding-bottom accounts for safe areas */}
             <div className="shrink-0 z-[9999] w-full p-4 pb-6 bg-slate-950/80 backdrop-blur-md border-t border-white/5">
                 <Navigation currentTab={activeTab} onTabChange={setActiveTab} userWalletAddress={userWalletAddress} />
             </div>
