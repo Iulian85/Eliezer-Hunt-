@@ -5,7 +5,7 @@ import { Navigation } from './components/Navigation';
 import { Tab, UserState, SpawnPoint, Coordinate, Campaign, AdStatus, HotspotDefinition, HotspotCategory } from './types';
 import { GLOBAL_SPAWNS, GLOBAL_HOTSPOTS, ADMIN_WALLET_ADDRESS } from './constants';
 import { generateRandomSpawns } from './utils';
-import { Sparkles, ShieldAlert, ExternalLink, UserX, AlertTriangle, Fingerprint, Lock, ShieldCheck, Loader2, SmartphoneNfc, RefreshCw, Settings, ShieldQuestion } from 'lucide-react';
+import { Sparkles, ShieldAlert, ExternalLink, UserX, AlertTriangle, Fingerprint, Lock, ShieldCheck, Loader2, SmartphoneNfc, RefreshCw, Settings, ShieldQuestion, Send } from 'lucide-react';
 import FingerprintJS from '@fingerprintjs/fingerprintjs';
 
 import { 
@@ -66,7 +66,7 @@ function App() {
     const [campaigns, setCampaigns] = useState<Campaign[]>([]);
     const [customHotspots, setCustomHotspots] = useState<HotspotDefinition[]>([]);
     const [isLoading, setIsLoading] = useState(true);
-    const [isTelegram, setIsTelegram] = useState(true);
+    const [isTelegram, setIsTelegram] = useState(false);
     const [isTestMode, setIsTestMode] = useState(false);
     const [showAIChat, setShowAIChat] = useState(false);
     const [isBlocked, setIsBlocked] = useState(false);
@@ -110,7 +110,8 @@ function App() {
         const initUser = async () => {
             const tg = window.Telegram?.WebApp;
             
-            if (!tg || !tg.initDataUnsafe?.user) {
+            // Strict environment check: Must have Telegram object and valid user data
+            if (!tg || !tg.initDataUnsafe || !tg.initDataUnsafe.user) {
                 setIsTelegram(false);
                 setIsLoading(false);
                 return;
@@ -118,6 +119,7 @@ function App() {
 
             tg.ready();
             tg.expand();
+            setIsTelegram(true);
 
             // Native Telegram Biometric Manager Initialization
             if (tg.BiometricManager) {
@@ -178,7 +180,6 @@ function App() {
             } catch (err) {
                 console.error("Initialization Error:", err);
             } finally {
-                setIsTelegram(true);
                 setIsLoading(false);
             }
         };
@@ -295,6 +296,40 @@ function App() {
             <div className="h-screen w-screen bg-slate-950 flex flex-col items-center justify-center text-white font-mono">
                 <div className="w-12 h-12 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin mb-4"></div>
                 <p className="animate-pulse tracking-tighter uppercase text-xs">ELZR Syncing...</p>
+            </div>
+        );
+    }
+
+    // Restriction screen for non-Telegram environments
+    if (!isTelegram) {
+        return (
+            <div className="h-screen w-screen bg-[#020617] flex flex-col items-center justify-center p-8 text-center relative overflow-hidden">
+                <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(6,182,212,0.1),transparent)] pointer-events-none"></div>
+                
+                <div className="relative z-10 max-w-xs flex flex-col items-center">
+                    <div className="w-24 h-24 bg-cyan-600/10 rounded-[2.5rem] flex items-center justify-center border-2 border-cyan-600/30 mb-10 shadow-[0_0_50px_rgba(6,182,212,0.15)]">
+                        <SmartphoneNfc className="text-cyan-400" size={48} />
+                    </div>
+                    
+                    <h1 className="text-3xl font-black text-white mb-4 uppercase tracking-tighter font-[Rajdhani]">Access Restricted</h1>
+                    <p className="text-slate-400 text-xs font-medium leading-relaxed mb-10 uppercase tracking-widest">
+                        Eliezer Hunt is a specialized Telegram Mini App protocol. Please launch via the official Telegram bot to synchronize your extraction node.
+                    </p>
+                    
+                    <a 
+                        href="https://t.me/Obadiah_Bot/eliezer"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="w-full py-5 bg-white text-black font-black text-sm uppercase tracking-[0.2em] rounded-[1.5rem] flex items-center justify-center gap-3 shadow-xl hover:bg-slate-200 transition-all active:scale-95"
+                    >
+                        <Send size={20} />
+                        Open in Telegram
+                    </a>
+                    
+                    <p className="mt-8 text-[9px] text-slate-600 font-black uppercase tracking-[0.3em]">
+                        Mobile Protocol v5.2 • Secure Connection Only
+                    </p>
+                </div>
             </div>
         );
     }
