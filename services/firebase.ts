@@ -35,13 +35,9 @@ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 export const db = getFirestore(app);
 export const functions = getFunctions(app);
 
-// Proxy pentru Gemini AI (Rulează pe server, cheia este ascunsă)
 export const askGeminiProxy = async (messages: any[]) => {
     const chatFunc = httpsCallable(functions, 'chatWithELZR');
-    const result = await chatFunc({ 
-        messages, 
-        initData: window.Telegram.WebApp.initData 
-    });
+    const result = await chatFunc({ messages, initData: window.Telegram.WebApp.initData });
     return result.data as { text: string };
 };
 
@@ -60,34 +56,21 @@ export const syncUserWithFirebase = async (
     initDataRaw?: string
 ): Promise<UserState> => {
     if (!userData.id) return localState;
-
     const userDocRef = doc(db, "users", userData.id.toString());
-    let bestName = [userData.firstName, userData.lastName].filter(Boolean).join(' ');
-    if (!bestName) bestName = userData.username || `Hunter_${userData.id.toString().slice(-4)}`;
-
+    
     try {
         const userDoc = await getDoc(userDocRef);
         if (userDoc.exists()) {
             const cloudData = userDoc.data() as any;
-            
-            // Verificare amprentă dispozitiv
-            if (cloudData.biometricEnabled !== false && cloudData.deviceFingerprint && cloudData.deviceFingerprint !== fingerprint) {
-                await updateDoc(userDocRef, { 
-                    suspiciousActivityCount: increment(1),
-                    lastSuspiciousAccess: serverTimestamp()
-                });
-            }
-
             await updateDoc(userDocRef, { 
                 lastActive: serverTimestamp(),
                 lastInitData: initDataRaw
             });
-            
             return { ...localState, ...cloudData, telegramId: userData.id };
         } else {
             const newUserProfile: any = {
                 telegramId: userData.id,
-                username: bestName,
+                username: userData.username || `Hunter_${userData.id.toString().slice(-4)}`,
                 photoUrl: userData.photoUrl || '',
                 deviceFingerprint: fingerprint,
                 lastInitData: initDataRaw,
@@ -103,68 +86,44 @@ export const syncUserWithFirebase = async (
             await setDoc(userDocRef, newUserProfile);
             return newUserProfile;
         }
-    } catch (e) {
-        return localState;
-    }
+    } catch (e) { return localState; }
 };
 
-export const saveCollectionToFirebase = async (
-    tgId: number, 
-    spawnId: string, 
-    value: number, 
-    category?: HotspotCategory, 
-    tonReward: number = 0,
-    captureLocation?: Coordinate,
-    verificationChallenge?: any
-) => {
+export const saveCollectionToFirebase = async (tgId: number, spawnId: string, value: number, category?: HotspotCategory, tonReward: number = 0, captureLocation?: Coordinate) => {
     if (!tgId) return;
     try {
-        // SECURITY: Trimitem DOAR cererea de claim. 
-        // Balanța se va actualiza doar dacă serverul aprobă acest document.
         await addDoc(collection(db, "claims"), {
             userId: tgId,
             spawnId,
             claimedValue: value,
-            claimedTon: tonReward,
-            category,
             timestamp: serverTimestamp(),
             location: captureLocation || null,
             status: "pending_verification",
-            challenge: verificationChallenge || null,
-            initData: window.Telegram.WebApp.initData // Semnătura pentru verificare HMAC
+            initData: window.Telegram.WebApp.initData 
         });
-    } catch (e) {
-        console.error("Claim failed");
-    }
+    } catch (e) {}
 };
 
 export const processReferralReward = async (referrerId: string, inviteeId: number, inviteeName: string) => {
-    // SECURITY: Adăugăm o cerere de referral. Serverul va verifica dacă inviteeId este un user real nou.
+    // SECURITY 5.0: Status setat la pending_proof_of_play
     await addDoc(collection(db, "referral_claims"), {
-        referrerId,
-        inviteeId,
-        inviteeName,
-        status: "pending",
+        referrerId, inviteeId, inviteeName,
+        status: "pending_proof_of_play",
         initData: window.Telegram.WebApp.initData,
         timestamp: serverTimestamp()
     });
 };
 
 export const getLeaderboard = async () => {
-    try {
-        const q = query(collection(db, "users"), orderBy("balance", "desc"), limit(50));
-        const snapshot = await getDocs(q);
-        return snapshot.docs.map((docSnap, index) => ({
-            rank: index + 1,
-            username: docSnap.data().username || "Hunter",
-            score: docSnap.data().balance || 0
-        }));
-    } catch (e) {
-        return [];
-    }
+    const q = query(collection(db, "users"), orderBy("balance", "desc"), limit(50));
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map((docSnap, index) => ({
+        rank: index + 1,
+        username: docSnap.data().username || "Hunter",
+        score: docSnap.data().balance || 0
+    }));
 };
 
-// Fix: Added missing deleteDoc implementation for hotspot, user and campaign deletion
 export const subscribeToCampaigns = (cb: any) => onSnapshot(collection(db, "campaigns"), snap => cb(snap.docs.map(d => d.data())));
 export const subscribeToHotspots = (cb: any) => onSnapshot(collection(db, "hotspots"), snap => cb(snap.docs.map(d => d.data())));
 export const saveHotspotFirebase = async (h: any) => setDoc(doc(db, "hotspots", h.id), h);
@@ -177,22 +136,8 @@ export const updateCampaignStatusFirebase = async (id: string, s: string) => upd
 export const deleteCampaignFirebase = async (id: string) => deleteDoc(doc(db, "campaigns", id));
 export const updateUserWalletInFirebase = async (id: number, w: string) => updateDoc(doc(db, "users", id.toString()), { walletAddress: w });
 export const resetUserInFirebase = async (id: number) => updateDoc(doc(db, "users", id.toString()), { balance: 0, collectedIds: [] });
-export const getAllUsersAdmin = async () => (await getDocs(collection(db, "users"))).docs.map(d => ({id: d.id, ...d.data()}));
-
-// Fix: Added missing processWithdrawTON export
 export const processWithdrawTON = async (tgId: number, amount: number) => {
-    if (!tgId) return false;
-    try {
-        await addDoc(collection(db, "withdrawals"), {
-            userId: tgId,
-            amount,
-            status: "pending",
-            timestamp: serverTimestamp(),
-            initData: window.Telegram.WebApp.initData
-        });
-        return true;
-    } catch (e) {
-        console.error("Withdrawal request failed", e);
-        return false;
-    }
+    await addDoc(collection(db, "withdrawal_requests"), { userId: tgId, amount, status: "pending", timestamp: serverTimestamp(), initData: window.Telegram.WebApp.initData });
+    return true;
 };
+export const getAllUsersAdmin = async () => (await getDocs(collection(db, "users"))).docs.map(d => ({id: d.id, ...d.data()}));

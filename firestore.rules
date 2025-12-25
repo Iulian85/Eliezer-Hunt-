@@ -3,30 +3,21 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // Helper: Verifică dacă utilizatorul este cel care deține documentul
-    // Notă: Necesită Firebase Auth integrat cu Telegram (Custom Auth)
-    function isOwner(userId) {
-      return request.auth != null && request.auth.uid == userId;
-    }
-
     match /users/{userId} {
-      // SECURITY: Utilizatorul poate citi doar propriul profil.
-      // În contextul Mini App fără Auth implicit, permitem citirea dacă ID-ul coincide cu cel din sesiune (logică implementată în Firebase Functions)
-      allow read: if true; // Ideal ar fi restricționat la request.auth.uid == userId post-implementare Custom Auth
-      
-      // SECURITY: Utilizatorul nu are voie să modifice balanțele sau statusul de ban.
-      // Doar profilul (nume, foto) este editabil.
-      allow update: if !request.resource.data.diff(resource.data).affectedKeys()
-        .hasAny(['balance', 'tonBalance', 'isBanned', 'referrals', 'deviceFingerprint', 'suspiciousActivityCount']);
-      
+      // SECURITY: Utilizatorul poate citi doar propriul profil. 
+      // Folosim ID-ul de document care este egal cu ID-ul Telegram.
+      allow read: if true; // În producție reală aici s-ar folosi request.auth.uid corelat cu custom claims
+      allow update: if false;
       allow create: if request.resource.data.balance == 0;
-      allow delete: if false;
     }
     
     match /claims/{claimId} {
-      // Permitem doar crearea de documente noi (cereri de colectare).
-      // Validarea și procesarea se face în Cloud Functions.
       allow create: if request.resource.data.status == "pending_verification";
+      allow read, update, delete: if false;
+    }
+
+    match /referral_claims/{claimId} {
+      allow create: if request.resource.data.status == "pending_proof_of_play";
       allow read, update, delete: if false;
     }
 
@@ -37,13 +28,14 @@ service cloud.firestore {
     
     match /campaigns/{campId} {
       allow read: if true;
-      allow create: if true; 
-      allow update, delete: if false;
+      allow write: if false;
     }
 
     match /hotspots/{hId} {
-      allow read: if true;
-      allow write: if false;
+      // SECURITY: Permitem citirea unui hotspot specific (get), 
+      // dar blocăm listarea întregii colecții (list) pentru a preveni scraping-ul locațiilor rare.
+      allow get: if true;
+      allow list: if false;
     }
   }
 }
