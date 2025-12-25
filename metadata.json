@@ -1,0 +1,9 @@
+{
+  "name": "ELZR Hunt",
+  "description": "Global Location-Based Crypto Hunting Game on Telegram",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "geolocation"
+  ]
+}
