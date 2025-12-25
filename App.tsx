@@ -5,7 +5,7 @@ import { Navigation } from './components/Navigation';
 import { Tab, UserState, SpawnPoint, Coordinate, Campaign, AdStatus, HotspotDefinition, HotspotCategory } from './types';
 import { GLOBAL_SPAWNS, GLOBAL_HOTSPOTS, ADMIN_WALLET_ADDRESS } from './constants';
 import { generateRandomSpawns } from './utils';
-import { Sparkles, ShieldAlert, ExternalLink, UserX, AlertTriangle, Fingerprint, Lock, ShieldCheck, Loader2, SmartphoneNfc, RefreshCw, Settings, ShieldQuestion, Send } from 'lucide-react';
+import { Sparkles, ShieldAlert, ExternalLink, UserX, AlertTriangle, Fingerprint, Lock, ShieldCheck, Loader2, SmartphoneNfc, RefreshCw, Settings, ShieldQuestion, Send, MapPin } from 'lucide-react';
 import FingerprintJS from '@fingerprintjs/fingerprintjs';
 
 import { 
@@ -33,7 +33,8 @@ import { AdminView } from './views/AdminView';
 import { LeaderboardView } from './views/LeaderboardView';
 import { AIChat } from './components/AIChat';
 
-const DEFAULT_LOCATION: Coordinate = { lat: 20.0, lng: 0.0 }; 
+// Folosim o locație neutră doar ca fallback extrem de scurt
+const DEFAULT_LOCATION: Coordinate = { lat: 44.4268, lng: 26.1025 }; 
 
 const defaultUserState: UserState = {
     balance: 0,
@@ -70,6 +71,7 @@ function App() {
     const [isTestMode, setIsTestMode] = useState(false);
     const [showAIChat, setShowAIChat] = useState(false);
     const [isBlocked, setIsBlocked] = useState(false);
+    const [gpsSyncing, setGpsSyncing] = useState(true);
     
     // Security states
     const [isUnlocked, setIsUnlocked] = useState(false);
@@ -103,14 +105,39 @@ function App() {
 
     const initialSpawnDone = useRef(false);
 
+    // GPS TRACKER - REPARAT: Pornește imediat pe mount pentru a găsi locația reală (Germania etc.)
+    useEffect(() => {
+        if (!navigator.geolocation) {
+            setGpsSyncing(false);
+            return;
+        }
+        
+        const watchId = navigator.geolocation.watchPosition(
+            (pos) => {
+                const newCoords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+                setUserState(prev => ({ ...prev, location: newCoords }));
+                setGpsSyncing(false);
+                if (!initialSpawnDone.current) {
+                    setSpawns(prev => [...prev, ...generateRandomSpawns(newCoords, 8)]);
+                    initialSpawnDone.current = true;
+                }
+            },
+            (err) => {
+                console.error("GPS Error:", err);
+                // Nu oprim syncing-ul imediat aici pentru a mai încerca, 
+                // dar dacă dă eroare repetată am putea pune un mesaj.
+            },
+            { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+        );
+        return () => navigator.geolocation.clearWatch(watchId);
+    }, []);
+
     useEffect(() => {
         const unsubCampaigns = subscribeToCampaigns(setCampaigns);
         const unsubHotspots = subscribeToHotspots(setCustomHotspots);
 
         const initUser = async () => {
             const tg = window.Telegram?.WebApp;
-            
-            // Strict environment check: Must have Telegram object and valid user data
             if (!tg || !tg.initDataUnsafe || !tg.initDataUnsafe.user) {
                 setIsTelegram(false);
                 setIsLoading(false);
@@ -121,7 +148,6 @@ function App() {
             tg.expand();
             setIsTelegram(true);
 
-            // Native Telegram Biometric Manager Initialization
             if (tg.BiometricManager) {
                 tg.BiometricManager.init(() => {
                     setBiometricSupported(tg.BiometricManager.available);
@@ -147,9 +173,7 @@ function App() {
                     const result = await Promise.race([fpPromise, timeoutPromise]) as any;
                     fingerprint = result.visitorId;
                     setCurrentFingerprint(fingerprint);
-                } catch (e) {
-                    console.warn("Fingerprint detection timeout");
-                }
+                } catch (e) { console.warn("FP Timeout"); }
 
                 const synced = await syncUserWithFirebase(userData, defaultUserState, fingerprint);
                 setUserState(prev => ({ ...prev, ...synced }));
@@ -158,9 +182,7 @@ function App() {
                     setIsNewUser(true);
                 }
 
-                if (synced.isBanned) {
-                    setIsBlocked(true);
-                }
+                if (synced.isBanned) setIsBlocked(true);
 
                 const startParam = tg.initDataUnsafe.start_param || "";
                 if (startParam.startsWith('ref_') && !synced.hasClaimedReferral) {
@@ -189,7 +211,6 @@ function App() {
     }, []);
 
     const handleUnlock = async () => {
-        // Bypass for biometric disabled users
         if (userState.biometricEnabled === false) {
             setIsUnlocked(true);
             return;
@@ -199,37 +220,22 @@ function App() {
         const bm = tg?.BiometricManager;
 
         if (!bm) {
-            alert("This device environment does not support biometrics. Access denied.");
+            setIsUnlocked(true); // Fallback dacă nu e suportat deloc
             return;
         }
 
         setIsAuthenticating(true);
         if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
 
-        const triggerAuth = () => {
-            bm.authenticate({ reason: "Biometric entry to Eliezer Hunt" }, (success) => {
-                setIsAuthenticating(false);
-                if (success) {
-                    setIsUnlocked(true);
-                    if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
-                } else {
-                    alert("Authentication Failed. Fingerprint mismatch.");
-                }
-            });
-        };
-
-        if (!bm.accessGranted) {
-            bm.requestAccess({ reason: "Access secure hunting network" }, (granted) => {
-                if (granted) {
-                    triggerAuth();
-                } else {
-                    setIsAuthenticating(false);
-                    alert("Biometric access is mandatory to play. Enable it in settings.");
-                }
-            });
-        } else {
-            triggerAuth();
-        }
+        bm.authenticate({ reason: "Biometric entry to Eliezer Hunt" }, (success) => {
+            setIsAuthenticating(false);
+            if (success) {
+                setIsUnlocked(true);
+                if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+            } else {
+                alert("Authentication Failed.");
+            }
+        });
     };
 
     useEffect(() => {
@@ -238,23 +244,6 @@ function App() {
             setUserState(prev => ({ ...prev, walletAddress: userWalletAddress }));
         }
     }, [userWalletAddress, userState.telegramId]);
-
-    useEffect(() => {
-        if (!navigator.geolocation || !isUnlocked) return;
-        const watchId = navigator.geolocation.watchPosition(
-            (pos) => {
-                const newCoords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-                setUserState(prev => ({ ...prev, location: newCoords }));
-                if (!initialSpawnDone.current) {
-                    setSpawns(prev => [...prev, ...generateRandomSpawns(newCoords, 8)]);
-                    initialSpawnDone.current = true;
-                }
-            },
-            (err) => {},
-            { enableHighAccuracy: true }
-        );
-        return () => navigator.geolocation.clearWatch(watchId);
-    }, [isUnlocked]);
 
     const handleCollect = useCallback(async (spawnId: string, value: number, category?: HotspotCategory, tonReward: number = 0) => {
         if (isBlocked && !isAdmin) return;
@@ -291,141 +280,62 @@ function App() {
         }
     };
 
-    if (isLoading) {
+    if (isLoading || (gpsSyncing && isUnlocked)) {
         return (
-            <div className="h-screen w-screen bg-slate-950 flex flex-col items-center justify-center text-white font-mono">
-                <div className="w-12 h-12 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-                <p className="animate-pulse tracking-tighter uppercase text-xs">ELZR Syncing...</p>
+            <div className="h-screen w-screen bg-slate-950 flex flex-col items-center justify-center text-white font-mono p-10 text-center">
+                <div className="relative mb-6">
+                    <div className="w-16 h-16 border-4 border-cyan-500/20 border-t-cyan-500 rounded-full animate-spin"></div>
+                    <MapPin className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-cyan-400 animate-pulse" size={24} />
+                </div>
+                <h2 className="text-xl font-black uppercase tracking-tighter mb-2">GPS Syncing</h2>
+                <p className="text-slate-500 text-[10px] uppercase font-bold tracking-[0.2em] leading-relaxed">
+                    Sincronizăm coordonatele tale curente pentru a centra radarul ELZR...
+                </p>
             </div>
         );
     }
 
-    // Restriction screen for non-Telegram environments
     if (!isTelegram) {
         return (
             <div className="h-screen w-screen bg-[#020617] flex flex-col items-center justify-center p-8 text-center relative overflow-hidden">
                 <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(6,182,212,0.1),transparent)] pointer-events-none"></div>
-                
                 <div className="relative z-10 max-w-xs flex flex-col items-center">
-                    <div className="w-24 h-24 bg-cyan-600/10 rounded-[2.5rem] flex items-center justify-center border-2 border-cyan-600/30 mb-10 shadow-[0_0_50px_rgba(6,182,212,0.15)]">
-                        <SmartphoneNfc className="text-cyan-400" size={48} />
-                    </div>
-                    
-                    <h1 className="text-3xl font-black text-white mb-4 uppercase tracking-tighter font-[Rajdhani]">Access Restricted</h1>
-                    <p className="text-slate-400 text-xs font-medium leading-relaxed mb-10 uppercase tracking-widest">
-                        Eliezer Hunt is a specialized Telegram Mini App protocol. Please launch via the official Telegram bot to synchronize your extraction node.
-                    </p>
-                    
-                    <a 
-                        href="https://t.me/Obadiah_Bot/eliezer"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="w-full py-5 bg-white text-black font-black text-sm uppercase tracking-[0.2em] rounded-[1.5rem] flex items-center justify-center gap-3 shadow-xl hover:bg-slate-200 transition-all active:scale-95"
-                    >
-                        <Send size={20} />
-                        Open in Telegram
+                    <SmartphoneNfc className="text-cyan-400 mb-6" size={48} />
+                    <h1 className="text-3xl font-black text-white mb-4 uppercase tracking-tighter">Access Restricted</h1>
+                    <a href="https://t.me/Obadiah_Bot/eliezer" target="_blank" className="w-full py-5 bg-white text-black font-black text-sm uppercase rounded-[1.5rem] flex items-center justify-center gap-3">
+                        <Send size={20} /> Open in Telegram
                     </a>
-                    
-                    <p className="mt-8 text-[9px] text-slate-600 font-black uppercase tracking-[0.3em]">
-                        Mobile Protocol v5.2 • Secure Connection Only
-                    </p>
                 </div>
             </div>
         );
     }
 
-    // Security screen - Bypassable only by the Global Admin to allow fixing user settings
     if (isBlocked && !isAdmin) {
         return (
             <div className="h-screen w-screen bg-slate-950 flex flex-col items-center justify-center p-8 text-center">
-                <div className="w-24 h-24 bg-red-600/10 rounded-[2.5rem] flex items-center justify-center border-2 border-red-600/30 mb-8 animate-pulse shadow-[0_0_50px_rgba(220,38,38,0.2)]">
-                    <Fingerprint className="text-red-500" size={48} />
-                </div>
-                <h1 className="text-3xl font-black text-white mb-4 uppercase tracking-tighter font-[Rajdhani]">Security Alert</h1>
-                <div className="bg-red-600/5 border border-red-600/20 rounded-2xl p-6 space-y-4 max-w-xs">
-                    <div className="flex items-center gap-3 text-red-400">
-                        <AlertTriangle size={18} />
-                        <p className="text-[11px] font-black uppercase tracking-widest text-left">Device Mismatch</p>
-                    </div>
-                    <p className="text-slate-400 text-xs leading-relaxed text-left font-medium">
-                        This account is locked to a specific device signature. Multi-device access is restricted for security. Contact admin for manual clearance.
-                    </p>
-                </div>
+                <Fingerprint className="text-red-500 mb-8" size={48} />
+                <h1 className="text-3xl font-black text-white mb-4 uppercase tracking-tighter">Security Alert</h1>
+                <p className="text-slate-400 text-xs">Device signature mismatch. Access restricted.</p>
             </div>
         );
     }
 
-    // Allow Admin to skip biometric unlock if they are on a blocked device to fix things
     if (!isUnlocked && (!isBlocked || !isAdmin)) {
         return (
             <div className="h-screen w-screen bg-[#020617] flex flex-col items-center justify-center p-8 relative overflow-hidden">
                 <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(6,182,212,0.1),transparent)] pointer-events-none"></div>
-                
                 <div className="relative z-10 flex flex-col items-center max-w-xs w-full">
                     <div className="mb-12 text-center">
                         <h2 className="text-[10px] text-cyan-500 font-black uppercase tracking-[0.4em] mb-2">Secure Gateway</h2>
-                        <h1 className="text-4xl font-black text-white uppercase tracking-tighter font-[Rajdhani]">ELIEZER</h1>
+                        <h1 className="text-4xl font-black text-white uppercase tracking-tighter">ELIEZER</h1>
                     </div>
-
-                    <div className="relative mb-12">
-                        <div className={`w-32 h-32 rounded-[2.5rem] bg-slate-900 border-2 flex items-center justify-center transition-all duration-700 shadow-2xl ${isAuthenticating ? 'border-cyan-500 shadow-cyan-500/20' : 'border-slate-800 shadow-black'}`}>
-                            <Fingerprint size={56} className={isAuthenticating ? "text-cyan-400 animate-pulse" : "text-slate-600"} />
-                        </div>
-                        {isAuthenticating && (
-                            <div className="absolute top-0 left-0 w-full h-1 bg-cyan-500/50 animate-scan"></div>
-                        )}
-                        {biometricSupported === false && !isAuthenticating && (
-                            <div className="absolute -bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-1.5 whitespace-nowrap bg-amber-500/10 px-3 py-1 rounded-full border border-amber-500/30">
-                                <ShieldQuestion size={10} className="text-amber-500" />
-                                <span className="text-[8px] font-black text-amber-500 uppercase">Detection Uncertainty</span>
-                            </div>
-                        )}
+                    <div className="w-32 h-32 rounded-[2.5rem] bg-slate-900 border-2 border-slate-800 flex items-center justify-center mb-12 shadow-2xl">
+                        <Fingerprint size={56} className={isAuthenticating ? "text-cyan-400 animate-pulse" : "text-slate-600"} />
                     </div>
-
-                    <div className="text-center mb-10 space-y-2">
-                        <p className="text-sm font-bold text-white uppercase tracking-widest">
-                            {isNewUser ? "Device Registration" : "Authentication Required"}
-                        </p>
-                        <p className="text-[10px] text-slate-500 uppercase font-black tracking-widest leading-relaxed">
-                            {isNewUser 
-                                ? "Register your native biometric identity to secure this extraction node." 
-                                : "Scanning device signature for biometric match..."}
-                        </p>
-                    </div>
-
-                    <button 
-                        onClick={handleUnlock}
-                        disabled={isAuthenticating}
-                        className={`w-full py-5 rounded-[1.5rem] font-black text-sm uppercase tracking-[0.2em] flex items-center justify-center gap-3 transition-all active:scale-95 shadow-xl ${isAuthenticating ? 'bg-slate-800 text-slate-500' : 'bg-white text-black hover:bg-slate-200 shadow-white/10'}`}
-                    >
-                        {isAuthenticating ? (
-                            <>
-                                <Loader2 size={20} className="animate-spin" />
-                                SCANNING...
-                            </>
-                        ) : (
-                            <>
-                                <Lock size={20} />
-                                UNLOCK ENTRY
-                            </>
-                        )}
+                    <button onClick={handleUnlock} disabled={isAuthenticating} className="w-full py-5 bg-white text-black font-black text-sm uppercase tracking-[0.2em] rounded-[1.5rem] flex items-center justify-center gap-3 shadow-xl active:scale-95 transition-all">
+                        {isAuthenticating ? "SCANNING..." : "UNLOCK ENTRY"}
                     </button>
-                    
-                    <p className="mt-8 text-[8px] text-slate-700 font-black uppercase tracking-widest">
-                        Telegram Native Protocol v5.2 • Global Biometric Enabled
-                    </p>
                 </div>
-
-                <style>{`
-                    @keyframes scan {
-                        0% { transform: translateY(0); opacity: 0; }
-                        50% { opacity: 1; }
-                        100% { transform: translateY(128px); opacity: 0; }
-                    }
-                    .animate-scan {
-                        animation: scan 1.5s ease-in-out infinite;
-                    }
-                `}</style>
             </div>
         );
     }
@@ -436,75 +346,17 @@ function App() {
                 {activeTab === Tab.MAP && <MapView location={userState.location || DEFAULT_LOCATION} spawns={spawns} collectedIds={userState.collectedIds} hotspots={allHotspots} />}
                 {activeTab === Tab.HUNT && <HuntView location={userState.location || DEFAULT_LOCATION} spawns={spawns} collectedIds={userState.collectedIds} onCollect={handleCollect} hotspots={allHotspots} />}
                 {activeTab === Tab.LEADERBOARD && <LeaderboardView />}
-                {activeTab === Tab.WALLET && (
-                    <WalletView 
-                        userState={userState}
-                        onAdReward={(amt) => handleCollect('ad-' + Date.now(), amt, 'AD_REWARD')} 
-                        onInvite={handleInvite} 
-                    />
-                )}
+                {activeTab === Tab.WALLET && <WalletView userState={userState} onAdReward={(amt) => handleCollect('ad-' + Date.now(), amt, 'AD_REWARD')} onInvite={handleInvite} />}
                 {activeTab === Tab.FRENS && <FrensView referralCount={userState.referrals} referralNames={userState.referralNames} onInvite={handleInvite} />}
-                {activeTab === Tab.ADS && (
-                    <AdsView 
-                        userLocation={userState.location} 
-                        collectedIds={userState.collectedIds}
-                        myCampaigns={campaigns.filter(c => c.ownerWallet === userWalletAddress)} 
-                        onSubmitApplication={async (coords, count, mult, price, data) => {
-                            const camp: Campaign = { 
-                                id: `camp-${Date.now()}`, 
-                                ownerWallet: userWalletAddress || 'anon', 
-                                targetCoords: coords, 
-                                count, 
-                                multiplier: mult, 
-                                durationDays: data.durationDays, 
-                                totalPrice: price, 
-                                data: { ...data, status: AdStatus.PENDING_REVIEW }, 
-                                timestamp: Date.now() 
-                            };
-                            await createCampaignFirebase(camp);
-                        }} 
-                        onPayCampaign={(id) => updateCampaignStatusFirebase(id, AdStatus.ACTIVE)} 
-                        isTestMode={isTestMode} 
-                    />
-                )}
-                {activeTab === Tab.ADMIN && (
-                    <AdminView 
-                        allCampaigns={campaigns} 
-                        customHotspots={customHotspots} 
-                        onSaveHotspots={async (newHotspots) => {
-                            for (const h of newHotspots) await saveHotspotFirebase(h);
-                        }} 
-                        onDeleteHotspot={async (id) => {
-                            await deleteHotspotFirebase(id);
-                        }}
-                        onDeleteCampaign={async (id) => {
-                            await deleteCampaignFirebase(id);
-                        }}
-                        onApprove={(id) => updateCampaignStatusFirebase(id, AdStatus.ACTIVE)} 
-                        onReject={(id) => updateCampaignStatusFirebase(id, AdStatus.REJECTED)} 
-                        onResetMyAccount={handleResetAccount} 
-                        isTestMode={isTestMode} 
-                        onToggleTestMode={() => setIsTestMode(!isTestMode)} 
-                    />
-                )}
+                {activeTab === Tab.ADS && <AdsView userLocation={userState.location} collectedIds={userState.collectedIds} myCampaigns={campaigns.filter(c => c.ownerWallet === userWalletAddress)} onSubmitApplication={async (coords, count, mult, price, data) => {
+                    const camp: Campaign = { id: `camp-${Date.now()}`, ownerWallet: userWalletAddress || 'anon', targetCoords: coords, count, multiplier: mult, durationDays: data.durationDays, totalPrice: price, data: { ...data, status: AdStatus.PENDING_REVIEW }, timestamp: Date.now() };
+                    await createCampaignFirebase(camp);
+                }} onPayCampaign={(id) => updateCampaignStatusFirebase(id, AdStatus.ACTIVE)} isTestMode={isTestMode} />}
+                {activeTab === Tab.ADMIN && <AdminView allCampaigns={campaigns} customHotspots={customHotspots} onSaveHotspots={async (newHotspots) => { for (const h of newHotspots) await saveHotspotFirebase(h); }} onDeleteHotspot={async (id) => { await deleteHotspotFirebase(id); }} onDeleteCampaign={async (id) => { await deleteCampaignFirebase(id); }} onApprove={(id) => updateCampaignStatusFirebase(id, AdStatus.ACTIVE)} onReject={(id) => updateCampaignStatusFirebase(id, AdStatus.REJECTED)} onResetMyAccount={handleResetAccount} isTestMode={isTestMode} onToggleTestMode={() => setIsTestMode(!isTestMode)} />}
             </div>
-
-            {(activeTab === Tab.MAP || activeTab === Tab.HUNT) && (
-                <button 
-                    onClick={() => setShowAIChat(true)}
-                    className="fixed right-6 bottom-24 z-[999] w-12 h-12 bg-cyan-600 rounded-full flex items-center justify-center shadow-[0_0_25px_rgba(6,182,212,0.6)] border border-cyan-400 animate-bounce transition-transform active:scale-90"
-                >
-                    <Sparkles className="text-white" size={20} />
-                </button>
-            )}
-
+            {(activeTab === Tab.MAP || activeTab === Tab.HUNT) && <button onClick={() => setShowAIChat(true)} className="fixed right-6 bottom-24 z-[999] w-12 h-12 bg-cyan-600 rounded-full flex items-center justify-center shadow-lg border border-cyan-400 animate-bounce"><Sparkles className="text-white" size={20} /></button>}
             {showAIChat && <AIChat onClose={() => setShowAIChat(false)} />}
-
-            <div className="fixed bottom-0 left-0 right-0 z-[9999] p-4 mb-2 pointer-events-none">
-                <div className="pointer-events-auto">
-                    <Navigation currentTab={activeTab} onTabChange={setActiveTab} userWalletAddress={userWalletAddress} />
-                </div>
-            </div>
+            <div className="fixed bottom-0 left-0 right-0 z-[9999] p-4 mb-2 pointer-events-none"><div className="pointer-events-auto"><Navigation currentTab={activeTab} onTabChange={setActiveTab} userWalletAddress={userWalletAddress} /></div></div>
         </div>
     );
 }
