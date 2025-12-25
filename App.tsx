@@ -5,7 +5,7 @@ import { Navigation } from './components/Navigation';
 import { Tab, UserState, SpawnPoint, Coordinate, Campaign, AdStatus, HotspotDefinition, HotspotCategory } from './types';
 import { GLOBAL_SPAWNS, GLOBAL_HOTSPOTS, ADMIN_WALLET_ADDRESS } from './constants';
 import { generateRandomSpawns } from './utils';
-import { Sparkles, ShieldAlert, ExternalLink, UserX, AlertTriangle, Fingerprint, Lock, ShieldCheck, Loader2, SmartphoneNfc, RefreshCw, Settings, ShieldQuestion, Send } from 'lucide-react';
+import { Sparkles, ShieldAlert, ExternalLink, UserX, AlertTriangle, Fingerprint, Lock, ShieldCheck, Loader2, SmartphoneNfc, RefreshCw, Settings, ShieldQuestion, Send, Shield } from 'lucide-react';
 import FingerprintJS from '@fingerprintjs/fingerprintjs';
 
 import { 
@@ -71,7 +71,7 @@ function App() {
     const [isBlocked, setIsBlocked] = useState(false);
     const [isUnlocked, setIsUnlocked] = useState(false);
     const [isAuthenticating, setIsAuthenticating] = useState(false);
-    const [isNewUser, setIsNewUser] = useState(false);
+    const [authError, setAuthError] = useState<string | null>(null);
     const [currentFingerprint, setCurrentFingerprint] = useState<string | null>(null);
 
     const isAdmin = useMemo(() => userWalletAddress === ADMIN_WALLET_ADDRESS, [userWalletAddress]);
@@ -108,6 +108,7 @@ function App() {
 
             tg.ready();
             tg.expand();
+            if (tg.disableVerticalSwipes) tg.disableVerticalSwipes();
             setIsTelegram(true);
 
             const tgUser = tg.initDataUnsafe.user;
@@ -120,7 +121,6 @@ function App() {
                 fingerprint = result.visitorId;
                 setCurrentFingerprint(fingerprint);
 
-                // SECURITY 6.0: Trimitem locația chiar la pornire pentru ancorare
                 const currentLoc = await new Promise<Coordinate | undefined>((resolve) => {
                     navigator.geolocation.getCurrentPosition(
                         p => resolve({ lat: p.coords.latitude, lng: p.coords.longitude }),
@@ -157,16 +157,41 @@ function App() {
     }, []);
 
     const handleUnlock = async () => {
-        if (userState.biometricEnabled === false) { setIsUnlocked(true); return; }
+        if (userState.biometricEnabled === false) { 
+            setIsUnlocked(true); 
+            return; 
+        }
+
         const tg = window.Telegram?.WebApp;
         const bm = tg?.BiometricManager;
-        if (!bm) { setIsUnlocked(true); return; }
 
+        if (!bm) { 
+            setIsUnlocked(true); 
+            return; 
+        }
+
+        setAuthError(null);
         setIsAuthenticating(true);
-        bm.authenticate({ reason: "Verify operator" }, (success) => {
-            setIsAuthenticating(false);
-            if (success) setIsUnlocked(true);
-            else alert("Mismatch.");
+
+        // Pasul 1: Inițializare BiometricManager
+        bm.init(() => {
+            if (!bm.available) {
+                setIsAuthenticating(false);
+                setIsUnlocked(true); // Fallback dacă nu e disponibil pe device
+                return;
+            }
+
+            // Pasul 2: Autentificare
+            bm.authenticate({ reason: "Sincronizare nod ELZR" }, (success) => {
+                setIsAuthenticating(false);
+                if (success) {
+                    if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+                    setIsUnlocked(true);
+                } else {
+                    if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('error');
+                    setAuthError("Eroare Biometrică. Încearcă din nou.");
+                }
+            });
         });
     };
 
@@ -194,11 +219,60 @@ function App() {
 
     if (isLoading) return <div className="h-screen w-screen bg-slate-950 flex flex-col items-center justify-center"><Loader2 className="text-cyan-500 animate-spin" /></div>;
 
+    // SECURITY BLOCK SCREEN (Restored UI)
     if (!isUnlocked && isTelegram && !isBlocked) {
         return (
-            <div className="h-screen w-screen bg-slate-950 flex flex-col items-center justify-center p-8">
-                <Fingerprint size={64} className="text-slate-700 mb-8" />
-                <button onClick={handleUnlock} className="w-full py-4 bg-white text-black font-black rounded-2xl uppercase tracking-widest text-sm">Unlock Interface</button>
+            <div className="h-screen w-screen bg-slate-950 flex flex-col items-center justify-center p-8 relative overflow-hidden">
+                <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-cyan-900/20 via-slate-950 to-slate-950"></div>
+                
+                <div className="relative z-10 flex flex-col items-center text-center max-w-xs">
+                    <div className="w-24 h-24 bg-slate-900 rounded-[2rem] border-2 border-slate-800 flex items-center justify-center mb-8 shadow-2xl relative">
+                        <div className="absolute inset-0 bg-cyan-500/10 rounded-[2rem] blur-xl animate-pulse"></div>
+                        <Shield className="text-cyan-500 relative z-10" size={40} />
+                    </div>
+
+                    <h1 className="text-2xl font-black text-white uppercase tracking-tighter mb-2 font-[Rajdhani]">Interfață Securizată</h1>
+                    <p className="text-[10px] text-slate-500 font-bold uppercase tracking-[0.2em] leading-relaxed mb-10">
+                        Deblocați terminalul pentru a începe scanarea sectorului GPS.
+                    </p>
+
+                    <button 
+                        onClick={handleUnlock} 
+                        disabled={isAuthenticating}
+                        className={`w-full py-4 rounded-2xl font-black uppercase tracking-widest text-xs flex items-center justify-center gap-3 transition-all active:scale-95 shadow-xl border
+                            ${isAuthenticating ? 'bg-slate-800 text-slate-500 border-slate-700' : 'bg-white text-black border-white hover:shadow-white/10'}
+                        `}
+                    >
+                        {isAuthenticating ? <Loader2 className="animate-spin" size={18} /> : <Fingerprint size={18} />}
+                        {isAuthenticating ? "Verificare..." : "Deblocare Sistem"}
+                    </button>
+
+                    {authError && (
+                        <div className="mt-6 flex items-center gap-2 text-red-500 animate-bounce">
+                            <ShieldAlert size={14} />
+                            <span className="text-[10px] font-black uppercase tracking-widest">{authError}</span>
+                        </div>
+                    )}
+                </div>
+
+                <div className="absolute bottom-10 text-[8px] text-slate-700 font-black uppercase tracking-[0.4em]">
+                    End-to-End Encryption Active
+                </div>
+            </div>
+        );
+    }
+
+    // BANNED SCREEN
+    if (isBlocked) {
+        return (
+            <div className="h-screen w-screen bg-slate-950 flex flex-col items-center justify-center p-8 text-center">
+                <div className="w-20 h-20 bg-red-900/20 rounded-3xl border-2 border-red-900/50 flex items-center justify-center mb-6">
+                    <UserX className="text-red-500" size={40} />
+                </div>
+                <h1 className="text-2xl font-black text-white uppercase tracking-tighter mb-2">Protocol Terminat</h1>
+                <p className="text-xs text-slate-500 font-bold uppercase leading-relaxed max-w-xs">
+                    Contul tău a fost suspendat pentru încălcarea regulilor de securitate (GPS Spoofing detectat).
+                </p>
             </div>
         );
     }
@@ -214,7 +288,6 @@ function App() {
                 {activeTab === Tab.ADS && <AdsView userLocation={userState.location} collectedIds={userState.collectedIds} myCampaigns={campaigns.filter(c => c.ownerWallet === userWalletAddress)} onSubmitApplication={async (coords, count, mult, price, data) => {
                     await createCampaignFirebase({ id: `camp-${Date.now()}`, ownerWallet: userWalletAddress || 'anon', targetCoords: coords, count, multiplier: mult, durationDays: data.durationDays, totalPrice: price, data: { ...data, status: AdStatus.PENDING_REVIEW }, timestamp: Date.now() });
                 }} onPayCampaign={(id) => updateCampaignStatusFirebase(id, AdStatus.ACTIVE)} isTestMode={isTestMode} />}
-                {/* Fixed: Replaced undefined function names onDeleteHotspot and onDeleteCampaign with their correct imported names */}
                 {activeTab === Tab.ADMIN && <AdminView allCampaigns={campaigns} customHotspots={customHotspots} onSaveHotspots={async (h) => { for (const item of h) await saveHotspotFirebase(item); }} onDeleteHotspot={deleteHotspotFirebase} onDeleteCampaign={deleteCampaignFirebase} onApprove={(id) => updateCampaignStatusFirebase(id, AdStatus.ACTIVE)} onReject={(id) => updateCampaignStatusFirebase(id, AdStatus.REJECTED)} onResetMyAccount={() => resetUserInFirebase(userState.telegramId!)} isTestMode={isTestMode} onToggleTestMode={() => setIsTestMode(!isTestMode)} />}
             </div>
             {(activeTab === Tab.MAP || activeTab === Tab.HUNT) && <button onClick={() => setShowAIChat(true)} className="fixed right-6 bottom-24 z-[999] w-12 h-12 bg-cyan-600 rounded-full flex items-center justify-center border border-cyan-400 animate-bounce"><Sparkles className="text-white" size={20} /></button>}
