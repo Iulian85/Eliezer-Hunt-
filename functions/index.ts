@@ -53,7 +53,8 @@ export const chatWithELZR = onCall(async (request) => {
         throw new HttpsError('unauthenticated', 'Security Breach.');
     }
     const sanitizedMessages = sanitizeAiInput(data.messages);
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
+    // Fix: Using process.env.API_KEY directly as per @google/genai coding guidelines.
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: sanitizedMessages.map((m: any) => ({ role: m.role, parts: [{ text: m.text }] })),
