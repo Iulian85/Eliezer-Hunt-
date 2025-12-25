@@ -11,6 +11,7 @@ import FingerprintJS from '@fingerprintjs/fingerprintjs';
 import { 
     syncUserWithFirebase, 
     saveCollectionToFirebase,
+    processReferralReward, 
     subscribeToCampaigns, 
     subscribeToHotspots,
     subscribeToUserProfile,
@@ -69,12 +70,18 @@ function App() {
     const [isTestMode, setIsTestMode] = useState(false);
     const [showAIChat, setShowAIChat] = useState(false);
     const [isBlocked, setIsBlocked] = useState(false);
+    
+    // Security states (Restored)
     const [isUnlocked, setIsUnlocked] = useState(false);
     const [isAuthenticating, setIsAuthenticating] = useState(false);
-    const [authError, setAuthError] = useState<string | null>(null);
+    const [isNewUser, setIsNewUser] = useState(false);
+    const [biometricSupported, setBiometricSupported] = useState<boolean | null>(null);
     const [currentFingerprint, setCurrentFingerprint] = useState<string | null>(null);
 
-    const isAdmin = useMemo(() => userWalletAddress === ADMIN_WALLET_ADDRESS, [userWalletAddress]);
+    const isAdmin = useMemo(() => {
+        return userWalletAddress && userWalletAddress === ADMIN_WALLET_ADDRESS;
+    }, [userWalletAddress]);
+
     const initialSpawnDone = useRef(false);
 
     useEffect(() => {
@@ -111,6 +118,13 @@ function App() {
             if (tg.disableVerticalSwipes) tg.disableVerticalSwipes();
             setIsTelegram(true);
 
+            // Native Telegram Biometric Manager Initialization (Restored)
+            if (tg.BiometricManager) {
+                tg.BiometricManager.init(() => {
+                    setBiometricSupported(tg.BiometricManager.available);
+                });
+            }
+
             const tgUser = tg.initDataUnsafe.user;
             const initDataRaw = window.Telegram.WebApp.initData;
 
@@ -140,6 +154,17 @@ function App() {
                 setUserState(prev => ({ ...prev, ...synced }));
                 if (synced.isBanned) setIsBlocked(true);
 
+                // Referral handling (Restored)
+                const startParam = tg.initDataUnsafe.start_param || "";
+                if (startParam.startsWith('ref_') && !synced.hasClaimedReferral) {
+                    const referrerId = startParam.replace('ref_', '');
+                    if (referrerId !== tgUser.id.toString()) {
+                        const fullName = [tgUser.first_name, tgUser.last_name].filter(Boolean).join(' ');
+                        const currentDisplayName = fullName || tgUser.username || `Hunter_${tgUser.id}`;
+                        await processReferralReward(referrerId, tgUser.id, currentDisplayName);
+                    }
+                }
+
                 subscribeToUserProfile(tgUser.id, (updated) => {
                     setUserState(prev => ({ ...prev, ...updated }));
                     if (updated.isBanned) setIsBlocked(true);
@@ -165,34 +190,39 @@ function App() {
         const tg = window.Telegram?.WebApp;
         const bm = tg?.BiometricManager;
 
-        if (!bm) { 
-            setIsUnlocked(true); 
-            return; 
+        if (!bm) {
+            alert("This device environment does not support biometrics. Access denied.");
+            return;
         }
 
-        setAuthError(null);
         setIsAuthenticating(true);
+        if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
 
-        // Pasul 1: Inițializare BiometricManager
-        bm.init(() => {
-            if (!bm.available) {
-                setIsAuthenticating(false);
-                setIsUnlocked(true); // Fallback dacă nu e disponibil pe device
-                return;
-            }
-
-            // Pasul 2: Autentificare
-            bm.authenticate({ reason: "Sincronizare nod ELZR" }, (success) => {
+        const triggerAuth = () => {
+            bm.authenticate({ reason: "Biometric entry to Eliezer Hunt" }, (success) => {
                 setIsAuthenticating(false);
                 if (success) {
                     if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
                     setIsUnlocked(true);
                 } else {
                     if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('error');
-                    setAuthError("Eroare Biometrică. Încearcă din nou.");
+                    alert("Authentication Failed. Fingerprint mismatch.");
                 }
             });
-        });
+        };
+
+        if (!bm.accessGranted) {
+            bm.requestAccess({ reason: "Access secure hunting network" }, (granted) => {
+                if (granted) {
+                    triggerAuth();
+                } else {
+                    setIsAuthenticating(false);
+                    alert("Biometric access is mandatory to play. Enable it in settings.");
+                }
+            });
+        } else {
+            triggerAuth();
+        }
     };
 
     const handleCollect = useCallback(async (spawnId: string, value: number, category?: HotspotCategory, tonReward: number = 0, challenge?: any) => {
@@ -217,62 +247,95 @@ function App() {
         return [...GLOBAL_HOTSPOTS, ...customHotspots, ...activeAds];
     }, [campaigns, customHotspots]);
 
-    if (isLoading) return <div className="h-screen w-screen bg-slate-950 flex flex-col items-center justify-center"><Loader2 className="text-cyan-500 animate-spin" /></div>;
-
-    // SECURITY BLOCK SCREEN (Restored UI)
-    if (!isUnlocked && isTelegram && !isBlocked) {
+    if (isLoading) {
         return (
-            <div className="h-screen w-screen bg-slate-950 flex flex-col items-center justify-center p-8 relative overflow-hidden">
-                <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-cyan-900/20 via-slate-950 to-slate-950"></div>
-                
-                <div className="relative z-10 flex flex-col items-center text-center max-w-xs">
-                    <div className="w-24 h-24 bg-slate-900 rounded-[2rem] border-2 border-slate-800 flex items-center justify-center mb-8 shadow-2xl relative">
-                        <div className="absolute inset-0 bg-cyan-500/10 rounded-[2rem] blur-xl animate-pulse"></div>
-                        <Shield className="text-cyan-500 relative z-10" size={40} />
+            <div className="h-screen w-screen bg-slate-950 flex flex-col items-center justify-center text-white font-mono">
+                <div className="w-12 h-12 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+                <p className="animate-pulse tracking-tighter uppercase text-xs">ELZR Syncing...</p>
+            </div>
+        );
+    }
+
+    // NON-TELEGRAM RESTRICTION SCREEN (Restored)
+    if (!isTelegram) {
+        return (
+            <div className="h-screen w-screen bg-[#020617] flex flex-col items-center justify-center p-8 text-center relative overflow-hidden">
+                <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(6,182,212,0.1),transparent)] pointer-events-none"></div>
+                <div className="relative z-10 max-w-xs flex flex-col items-center">
+                    <div className="w-24 h-24 bg-cyan-600/10 rounded-[2.5rem] flex items-center justify-center border-2 border-cyan-600/30 mb-10 shadow-[0_0_50px_rgba(6,182,212,0.15)]">
+                        <SmartphoneNfc className="text-cyan-400" size={48} />
                     </div>
-
-                    <h1 className="text-2xl font-black text-white uppercase tracking-tighter mb-2 font-[Rajdhani]">Interfață Securizată</h1>
-                    <p className="text-[10px] text-slate-500 font-bold uppercase tracking-[0.2em] leading-relaxed mb-10">
-                        Deblocați terminalul pentru a începe scanarea sectorului GPS.
+                    <h1 className="text-3xl font-black text-white mb-4 uppercase tracking-tighter font-[Rajdhani]">Access Restricted</h1>
+                    <p className="text-slate-400 text-xs font-medium leading-relaxed mb-10 uppercase tracking-widest">
+                        Eliezer Hunt is a specialized Telegram Mini App protocol. Please launch via the official Telegram bot to synchronize your extraction node.
                     </p>
-
-                    <button 
-                        onClick={handleUnlock} 
-                        disabled={isAuthenticating}
-                        className={`w-full py-4 rounded-2xl font-black uppercase tracking-widest text-xs flex items-center justify-center gap-3 transition-all active:scale-95 shadow-xl border
-                            ${isAuthenticating ? 'bg-slate-800 text-slate-500 border-slate-700' : 'bg-white text-black border-white hover:shadow-white/10'}
-                        `}
-                    >
-                        {isAuthenticating ? <Loader2 className="animate-spin" size={18} /> : <Fingerprint size={18} />}
-                        {isAuthenticating ? "Verificare..." : "Deblocare Sistem"}
-                    </button>
-
-                    {authError && (
-                        <div className="mt-6 flex items-center gap-2 text-red-500 animate-bounce">
-                            <ShieldAlert size={14} />
-                            <span className="text-[10px] font-black uppercase tracking-widest">{authError}</span>
-                        </div>
-                    )}
-                </div>
-
-                <div className="absolute bottom-10 text-[8px] text-slate-700 font-black uppercase tracking-[0.4em]">
-                    End-to-End Encryption Active
+                    <a href="https://t.me/Obadiah_Bot/eliezer" target="_blank" rel="noopener noreferrer" className="w-full py-5 bg-white text-black font-black text-sm uppercase tracking-[0.2em] rounded-[1.5rem] flex items-center justify-center gap-3 shadow-xl hover:bg-slate-200 transition-all active:scale-95">
+                        <Send size={20} /> Open in Telegram
+                    </a>
+                    <p className="mt-8 text-[9px] text-slate-600 font-black uppercase tracking-[0.3em]">Mobile Protocol v5.2 • Secure Connection Only</p>
                 </div>
             </div>
         );
     }
 
-    // BANNED SCREEN
-    if (isBlocked) {
+    // BLOCKED SCREEN (Restored)
+    if (isBlocked && !isAdmin) {
         return (
             <div className="h-screen w-screen bg-slate-950 flex flex-col items-center justify-center p-8 text-center">
-                <div className="w-20 h-20 bg-red-900/20 rounded-3xl border-2 border-red-900/50 flex items-center justify-center mb-6">
-                    <UserX className="text-red-500" size={40} />
+                <div className="w-24 h-24 bg-red-600/10 rounded-[2.5rem] flex items-center justify-center border-2 border-red-600/30 mb-8 animate-pulse shadow-[0_0_50px_rgba(220,38,38,0.2)]">
+                    <Fingerprint className="text-red-500" size={48} />
                 </div>
-                <h1 className="text-2xl font-black text-white uppercase tracking-tighter mb-2">Protocol Terminat</h1>
-                <p className="text-xs text-slate-500 font-bold uppercase leading-relaxed max-w-xs">
-                    Contul tău a fost suspendat pentru încălcarea regulilor de securitate (GPS Spoofing detectat).
-                </p>
+                <h1 className="text-3xl font-black text-white mb-4 uppercase tracking-tighter font-[Rajdhani]">Security Alert</h1>
+                <div className="bg-red-600/5 border border-red-600/20 rounded-2xl p-6 space-y-4 max-w-xs">
+                    <div className="flex items-center gap-3 text-red-400">
+                        <AlertTriangle size={18} />
+                        <p className="text-[11px] font-black uppercase tracking-widest text-left">Device Mismatch</p>
+                    </div>
+                    <p className="text-slate-400 text-xs leading-relaxed text-left font-medium">
+                        This account is locked to a specific device signature. Multi-device access is restricted for security. Contact admin for manual clearance.
+                    </p>
+                </div>
+            </div>
+        );
+    }
+
+    // SECURE GATEWAY / BIOMETRIC UNLOCK (Restored)
+    if (!isUnlocked && (!isBlocked || !isAdmin)) {
+        return (
+            <div className="h-screen w-screen bg-[#020617] flex flex-col items-center justify-center p-8 relative overflow-hidden">
+                <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(6,182,212,0.1),transparent)] pointer-events-none"></div>
+                <div className="relative z-10 flex flex-col items-center max-w-xs w-full">
+                    <div className="mb-12 text-center">
+                        <h2 className="text-[10px] text-cyan-500 font-black uppercase tracking-[0.4em] mb-2">Secure Gateway</h2>
+                        <h1 className="text-4xl font-black text-white uppercase tracking-tighter font-[Rajdhani]">ELIEZER</h1>
+                    </div>
+                    <div className="relative mb-12">
+                        <div className={`w-32 h-32 rounded-[2.5rem] bg-slate-900 border-2 flex items-center justify-center transition-all duration-700 shadow-2xl ${isAuthenticating ? 'border-cyan-500 shadow-cyan-500/20' : 'border-slate-800 shadow-black'}`}>
+                            <Fingerprint size={56} className={isAuthenticating ? "text-cyan-400 animate-pulse" : "text-slate-600"} />
+                        </div>
+                        {isAuthenticating && <div className="absolute top-0 left-0 w-full h-1 bg-cyan-500/50 animate-scan"></div>}
+                        {biometricSupported === false && !isAuthenticating && (
+                            <div className="absolute -bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-1.5 whitespace-nowrap bg-amber-500/10 px-3 py-1 rounded-full border border-amber-500/30">
+                                <ShieldQuestion size={10} className="text-amber-500" />
+                                <span className="text-[8px] font-black text-amber-500 uppercase">Detection Uncertainty</span>
+                            </div>
+                        )}
+                    </div>
+                    <div className="text-center mb-10 space-y-2">
+                        <p className="text-sm font-bold text-white uppercase tracking-widest">{isNewUser ? "Device Registration" : "Authentication Required"}</p>
+                        <p className="text-[10px] text-slate-500 uppercase font-black tracking-widest leading-relaxed">
+                            {isNewUser ? "Register your native biometric identity to secure this extraction node." : "Scanning device signature for biometric match..."}
+                        </p>
+                    </div>
+                    <button onClick={handleUnlock} disabled={isAuthenticating} className={`w-full py-5 rounded-[1.5rem] font-black text-sm uppercase tracking-[0.2em] flex items-center justify-center gap-3 transition-all active:scale-95 shadow-xl ${isAuthenticating ? 'bg-slate-800 text-slate-500' : 'bg-white text-black hover:bg-slate-200 shadow-white/10'}`}>
+                        {isAuthenticating ? <><Loader2 size={20} className="animate-spin" /> SCANNING...</> : <><Lock size={20} /> UNLOCK ENTRY</>}
+                    </button>
+                    <p className="mt-8 text-[8px] text-slate-700 font-black uppercase tracking-widest">Telegram Native Protocol v5.2 • Global Biometric Enabled</p>
+                </div>
+                <style>{`
+                    @keyframes scan { 0% { transform: translateY(0); opacity: 0; } 50% { opacity: 1; } 100% { transform: translateY(128px); opacity: 0; } }
+                    .animate-scan { animation: scan 1.5s ease-in-out infinite; }
+                `}</style>
             </div>
         );
     }

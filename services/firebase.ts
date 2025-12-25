@@ -62,7 +62,6 @@ export const syncUserWithFirebase = async (
     try {
         const userDoc = await getDoc(userDocRef);
         if (userDoc.exists()) {
-            // SECURITY 6.0: Update lastLocation chiar și la sync pentru a avea ancoră de viteză
             await updateDoc(userDocRef, { 
                 lastActive: serverTimestamp(),
                 lastInitData: initDataRaw,
@@ -87,6 +86,18 @@ export const syncUserWithFirebase = async (
             return newUserProfile;
         }
     } catch (e) { return localState; }
+};
+
+export const processReferralReward = async (referrerId: string, joinerId: number, joinerDisplayName: string) => {
+    try {
+        await addDoc(collection(db, "referral_claims"), {
+            referrerId,
+            joinerId,
+            joinerDisplayName,
+            status: "pending_proof_of_play",
+            timestamp: serverTimestamp()
+        });
+    } catch (e) {}
 };
 
 export const saveCollectionToFirebase = async (tgId: number, spawnId: string, value: number, category?: HotspotCategory, tonReward: number = 0, captureLocation?: Coordinate, challenge?: any) => {
