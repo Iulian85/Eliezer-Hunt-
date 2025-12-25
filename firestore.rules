@@ -3,22 +3,31 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
+    // Funcție pentru verificarea dacă utilizatorul este autentificat prin Firebase (dacă se folosește Custom Auth)
+    // În acest context, ne bazăm pe validarea hash-ului în Cloud Functions pentru operațiuni sensibile.
+    
     match /users/{userId} {
-      // Permitem citirea doar dacă documentul aparține utilizatorului curent.
-      allow read: if request.auth != null && request.auth.uid == userId; 
+      // Citirea este permisă; scrierea este strict interzisă pentru câmpurile de balanță/status.
+      allow read: if true; 
       
-      // Blocăm update-ul direct de la client pe câmpuri sensibile (biometricEnabled, isBanned, balance)
+      // Clientul nu are voie să își modifice singur balanța sau starea de ban.
+      // Doar Cloud Functions (Admin SDK) pot face asta.
       allow update: if false; 
       
-      allow create: if request.resource.data.balance == 0;
+      // Permitem crearea inițială doar dacă datele sunt "curate".
+      allow create: if request.resource.data.balance == 0 
+                    && request.resource.data.isBanned == false;
     }
     
     match /claims/{claimId} {
+      // Utilizatorul poate doar să creeze o cerere de claim. 
+      // Cloud Function-ul 'onClaimCreated' o va procesa sau o va șterge dacă e invalidă.
       allow create: if request.resource.data.status == "pending_verification";
       allow read, update, delete: if false;
     }
 
     match /ad_claims/{claimId} {
+      // Cererile de recompensă pentru reclame.
       allow create: if true;
       allow read, update, delete: if false;
     }
@@ -39,6 +48,8 @@ service cloud.firestore {
     }
 
     match /hotspots/{hId} {
+      // IMPORTANT: Blocăm 'list' pentru a preveni scraparea locațiilor.
+      // Clientul poate citi un hotspot doar dacă îi cunoaște ID-ul (obținut procedural în frontend).
       allow get: if true;
       allow list: if false;
     }
