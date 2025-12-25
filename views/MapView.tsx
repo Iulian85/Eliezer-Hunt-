@@ -1,6 +1,6 @@
 
-import React, { useState, useMemo, useEffect } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, useMapEvents, useMap } from 'react-leaflet';
+import React, { useState, useMemo } from 'react';
+import { MapContainer, TileLayer, Marker, Popup, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import { Coordinate, SpawnPoint, HotspotCategory, HotspotDefinition } from '../types';
 import { generateProceduralSpawns } from '../utils';
@@ -11,16 +11,6 @@ interface MapViewProps {
     collectedIds: string[];
     hotspots: HotspotDefinition[];
 }
-
-const RecenterMap = ({ location }: { location: Coordinate }) => {
-    const map = useMap();
-    useEffect(() => {
-        if (location) {
-            map.setView([location.lat, location.lng], map.getZoom());
-        }
-    }, [location, map]);
-    return null;
-};
 
 const createStyledIcon = (category: HotspotCategory | undefined, densityValue: number, logoUrl?: string) => {
     let ringColor = "border-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.6)]";
@@ -48,6 +38,7 @@ const createStyledIcon = (category: HotspotCategory | undefined, densityValue: n
         badgeText = densityValue >= 1000 ? `${(densityValue / 1000).toFixed(0)}k` : `${densityValue}`;
     }
 
+    // Dacă avem un logoUrl valid, îl folosim în loc de iconița text (emoji)
     const innerHtml = logoUrl 
         ? `<img src="${logoUrl}" class="w-8 h-8 object-contain rounded-full" onerror="this.style.display='none'" />` 
         : `<span class="text-2xl">${iconContent}</span>`;
@@ -69,7 +60,7 @@ const createStyledIcon = (category: HotspotCategory | undefined, densityValue: n
     });
 };
 
-const createIndividualCoinIcon = () => L.divIcon({
+const createIndividualCoinIcon = (value: number) => L.divIcon({
     className: 'normal-coin-marker',
     html: `
         <div class="w-6 h-6 bg-amber-500 border-2 border-white rounded-full flex items-center justify-center shadow-lg">
@@ -79,15 +70,8 @@ const createIndividualCoinIcon = () => L.divIcon({
     iconAnchor: [12, 12]
 });
 
-const MapEventsHandler = ({ onBoundsChange }: { onBoundsChange: (bounds: L.LatLngBounds, zoom: number) => void }) => {
-    const map = useMap();
-    
-    // Initial bounds set when map ready
-    useEffect(() => {
-        onBoundsChange(map.getBounds(), map.getZoom());
-    }, [map]);
-
-    useMapEvents({
+const MapEventsHandler = ({ onBoundsChange }: { onBoundsChange: (bounds: any, zoom: number) => void }) => {
+    const map = useMapEvents({
         moveend: () => onBoundsChange(map.getBounds(), map.getZoom()),
         zoomend: () => onBoundsChange(map.getBounds(), map.getZoom())
     });
@@ -105,28 +89,15 @@ export const MapView: React.FC<MapViewProps> = ({ location, spawns, collectedIds
 
     const visibleSpawns = useMemo(() => {
         if (!bounds) return [];
-        const mapBounds = { 
-            north: bounds.getNorth(), 
-            south: bounds.getSouth(), 
-            east: bounds.getEast(), 
-            west: bounds.getWest() 
-        };
+        const mapBounds = { north: bounds.getNorth(), south: bounds.getSouth(), east: bounds.getEast(), west: bounds.getWest() };
         const procedural = generateProceduralSpawns(mapBounds, zoom, hotspots);
         return procedural.filter(s => !collectedIds.includes(s.id));
     }, [bounds, zoom, collectedIds, hotspots]);
 
     return (
         <div className="h-full w-full relative">
-            <MapContainer 
-                center={[location.lat, location.lng]} 
-                zoom={18} 
-                className="h-full w-full bg-slate-950" 
-                zoomControl={false}
-                // Removed redundant and incorrectly typed whenReady prop.
-                // Initial bounds are already set via MapEventsHandler child component.
-            >
+            <MapContainer center={[location.lat, location.lng]} zoom={18} className="h-full w-full bg-slate-950" zoomControl={false}>
                 <MapEventsHandler onBoundsChange={handleBoundsChange} />
-                <RecenterMap location={location} />
                 <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" />
                 
                 <Marker position={[location.lat, location.lng]} icon={L.divIcon({ className: 'u', html: `<div class="w-5 h-5 bg-cyan-400 rounded-full border-2 border-white shadow-[0_0_15px_rgba(34,211,238,0.8)]"></div>`, iconSize: [20,20] })} />
@@ -139,14 +110,15 @@ export const MapView: React.FC<MapViewProps> = ({ location, spawns, collectedIds
                         <Marker 
                             key={s.id} 
                             position={[s.coords.lat, s.coords.lng]} 
-                            icon={isMainHotspot || isSpecial ? createStyledIcon(s.category, s.density || 0, s.logoUrl) : createIndividualCoinIcon()}
+                            icon={isMainHotspot || isSpecial ? createStyledIcon(s.category, s.density || 0, s.logoUrl) : createIndividualCoinIcon(s.value)}
                             zIndexOffset={isSpecial ? 1000 : 0}
                         >
                             <Popup>
                                 <div className="p-2 text-center">
                                     <h3 className="font-black text-slate-800 uppercase text-xs">{s.name}</h3>
-                                    <div className="bg-amber-100 px-2 py-1 rounded border border-amber-200 mt-2">
-                                        <span className="text-lg font-black text-amber-600">{s.value} ELZR</span>
+                                    <p className="text-[10px] text-slate-500 mb-1">{s.description || 'Rare Area'}</p>
+                                    <div className="bg-amber-100 px-2 py-1 rounded border border-amber-200">
+                                        <span className="text-lg font-black text-amber-600">VALUE: {s.value}</span>
                                     </div>
                                 </div>
                             </Popup>
