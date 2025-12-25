@@ -80,21 +80,21 @@ export const WalletView: React.FC<WalletViewProps> = ({
     ];
 
     return (
-        <div className="h-full w-full p-6 overflow-y-auto pb-40 no-scrollbar bg-slate-950">
-            <div className="flex justify-between items-center mb-8 mt-2">
+        <div className="h-full w-full overflow-y-auto px-6 py-6 pb-20 no-scrollbar bg-slate-950">
+            <div className="flex justify-between items-center mb-8">
                 <h1 className="text-3xl font-black text-white font-[Rajdhani] tracking-tighter uppercase leading-none">Terminal <span className="text-cyan-500">Wallet</span></h1>
                 <div className="scale-90 origin-right"><TonConnectButton /></div>
             </div>
 
-            <div className="bg-slate-900/80 border-2 border-slate-800 rounded-[2.5rem] p-8 mb-8 relative overflow-hidden shadow-2xl">
+            <div className="bg-slate-900 border-2 border-slate-800 rounded-[2.5rem] p-8 mb-8 relative overflow-hidden shadow-2xl">
                 <div className="absolute -right-6 -top-6 bg-cyan-500/10 w-48 h-48 rounded-full blur-3xl"></div>
                 <div className="flex flex-col items-center text-center relative z-10">
                     <div className="p-4 bg-cyan-500/10 rounded-full border border-cyan-500/20 mb-4 shadow-[0_0_20px_rgba(6,182,212,0.2)]"><Coins className="text-cyan-400" size={32} /></div>
-                    <span className="text-[10px] text-slate-500 uppercase tracking-[0.4em] font-black mb-1">Current Extraction Yield</span>
+                    <span className="text-[10px] text-slate-500 uppercase tracking-[0.4em] font-black mb-1">Total Extraction Yield</span>
                     <span className="text-6xl font-black text-white font-[Rajdhani] tracking-tighter">{balance.toLocaleString()}</span>
                     <div className="mt-4 flex items-center gap-2 bg-green-500/10 px-3 py-1 rounded-full border border-green-500/20">
                         <TrendingUp size={12} className="text-green-400" />
-                        <span className="text-[10px] text-green-400 font-black uppercase tracking-widest">Active Node Sync</span>
+                        <span className="text-[10px] text-green-400 font-black uppercase tracking-widest">Node Active</span>
                     </div>
                 </div>
             </div>
@@ -120,10 +120,6 @@ export const WalletView: React.FC<WalletViewProps> = ({
                         </div>
                     ))}
                 </div>
-                <div className="mt-4 p-4 bg-cyan-900/20 border border-cyan-500/20 rounded-2xl flex items-center justify-between shadow-lg">
-                    <span className="text-[10px] text-cyan-200 font-black uppercase tracking-widest">Global Protocol Multiplier</span>
-                    <span className="text-lg font-black text-cyan-400 font-mono">x1.00</span>
-                </div>
             </div>
 
             <div className="bg-slate-900 border-2 border-slate-800 p-5 rounded-[2rem] flex items-center justify-between mb-8 shadow-xl">
@@ -131,7 +127,7 @@ export const WalletView: React.FC<WalletViewProps> = ({
                     <div className={`p-3 rounded-2xl ${timeRemaining ? 'bg-slate-800 text-slate-600' : 'bg-green-600/20 text-green-400 animate-pulse'}`}><Gift size={24} /></div>
                     <div>
                         <h3 className="font-black text-white text-xs uppercase tracking-widest leading-none mb-1">Daily Supply</h3>
-                        <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest">{timeRemaining ? `Next in: ${timeRemaining}` : '+500 ELZR Ready'}</p>
+                        <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest">{timeRemaining ? `Next: ${timeRemaining}` : '+500 ELZR Ready'}</p>
                     </div>
                 </div>
                 <button onClick={handleWatchAd} disabled={loadingAd || !!timeRemaining} className={`px-6 py-3 rounded-xl font-black text-[10px] shadow-lg active:scale-95 transition-all uppercase tracking-[0.2em] border ${timeRemaining ? "bg-slate-800 text-slate-700 border-slate-700" : "bg-white text-black border-white hover:bg-slate-200"}`}>
@@ -143,13 +139,12 @@ export const WalletView: React.FC<WalletViewProps> = ({
                 <div className="relative z-10">
                     <div className="flex items-center gap-2 mb-6">
                         <Wallet className="text-blue-400" size={18} />
-                        <span className="text-[10px] text-blue-200 font-black uppercase tracking-widest">TON Assets (Network A)</span>
+                        <span className="text-[10px] text-blue-200 font-black uppercase tracking-widest">TON Assets</span>
                     </div>
                     <div className="mb-8 text-center"><div className="text-5xl font-black text-white font-mono tracking-tighter flex items-baseline justify-center gap-2">{tonBalance.toFixed(2)} <span className="text-lg text-blue-500 font-black">TON</span></div></div>
                     <button onClick={handleWithdraw} disabled={tonBalance < 10 || withdrawing} className={`w-full py-5 rounded-2xl font-black text-xs uppercase tracking-[0.2em] flex items-center justify-center gap-3 transition-all active:scale-95 shadow-xl border ${tonBalance >= 10 ? 'bg-white text-blue-900 border-white hover:bg-slate-200' : 'bg-slate-800/50 text-slate-600 border-slate-800'}`}>
-                        {withdrawing ? <Loader2 className="animate-spin" size={18}/> : (withdrawSuccess ? "Protocol Complete" : (tonBalance >= 10 ? "Initiate Withdrawal" : "Min 10 TON Required"))}
+                        {withdrawing ? <Loader2 className="animate-spin" size={18}/> : (withdrawSuccess ? "Success" : (tonBalance >= 10 ? "Withdraw TON" : "Min 10 TON Required"))}
                     </button>
-                    <p className="text-center text-[8px] text-slate-600 mt-4 font-bold uppercase tracking-widest">Safe-Withdrawal Protocol v2.1</p>
                 </div>
             </div>
         </div>

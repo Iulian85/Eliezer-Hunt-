@@ -74,9 +74,7 @@ function App() {
     // Security states
     const [isUnlocked, setIsUnlocked] = useState(false);
     const [isAuthenticating, setIsAuthenticating] = useState(false);
-    const [isNewUser, setIsNewUser] = useState(false);
     const [biometricSupported, setBiometricSupported] = useState<boolean | null>(null);
-    const [currentFingerprint, setCurrentFingerprint] = useState<string | null>(null);
 
     const isAdmin = useMemo(() => {
         return userWalletAddress && userWalletAddress === ADMIN_WALLET_ADDRESS;
@@ -132,7 +130,6 @@ function App() {
                 const fp = await FingerprintJS.load();
                 const result = await fp.get();
                 fingerprint = result.visitorId;
-                setCurrentFingerprint(fingerprint);
 
                 const currentLoc = await new Promise<Coordinate | undefined>((resolve) => {
                     navigator.geolocation.getCurrentPosition(
@@ -183,7 +180,6 @@ function App() {
         const tg = window.Telegram?.WebApp;
         const bm = tg?.BiometricManager;
 
-        // Ensure we don't skip if the manager is actually available
         if (bm && bm.available) {
             setIsAuthenticating(true);
             if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
@@ -196,13 +192,13 @@ function App() {
                         setIsUnlocked(true);
                     } else {
                         if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('error');
-                        alert("Biometric Error. Authentication failed.");
+                        alert("Biometric verification failed.");
                     }
                 });
             };
 
             if (!bm.accessGranted) {
-                bm.requestAccess({ reason: "Secure access to the extraction network" }, (granted) => {
+                bm.requestAccess({ reason: "Access secure hunting network" }, (granted) => {
                     if (granted) triggerAuth();
                     else {
                         setIsAuthenticating(false);
@@ -213,11 +209,11 @@ function App() {
                 triggerAuth();
             }
         } else {
-            // Fallback for environments without native biometric support (e.g., Desktop or specific users)
+            // Environment bypass (Desktop/Unsupported)
             if (isAdmin || userState.biometricEnabled === false) {
                 setIsUnlocked(true);
             } else {
-                alert("Security protocol requires a mobile device with active biometric sensors.");
+                alert("Security protocol requires a mobile device with biometric sensors.");
             }
         }
     };
@@ -262,7 +258,7 @@ function App() {
                         <SmartphoneNfc className="text-cyan-400" size={48} />
                     </div>
                     <h1 className="text-3xl font-black text-white mb-4 uppercase tracking-tighter font-[Rajdhani]">Access Restricted</h1>
-                    <p className="text-slate-400 text-xs font-medium leading-relaxed mb-10 uppercase tracking-widest">The Eliezer Hunt protocol requires synchronization via the Telegram Bot.</p>
+                    <p className="text-slate-400 text-xs font-medium leading-relaxed mb-10 uppercase tracking-widest">Protocol requires synchronization via the official Telegram Bot.</p>
                     <a href="https://t.me/Obadiah_Bot/eliezer" className="w-full py-5 bg-white text-black font-black text-sm uppercase tracking-widest rounded-2xl flex items-center justify-center gap-3">
                         <Send size={20} /> Open in Telegram
                     </a>
@@ -278,7 +274,7 @@ function App() {
                     <Fingerprint className="text-red-500" size={48} />
                 </div>
                 <h1 className="text-3xl font-black text-white mb-4 uppercase tracking-tighter font-[Rajdhani]">Security Alert</h1>
-                <p className="text-slate-400 text-xs leading-relaxed max-w-xs uppercase font-bold">Account locked due to suspicious activity. Please contact support.</p>
+                <p className="text-slate-400 text-xs leading-relaxed max-w-xs uppercase font-bold">Account locked due to suspicious activity. Contact department admin.</p>
             </div>
         );
     }
@@ -301,7 +297,7 @@ function App() {
                     <button onClick={handleUnlock} disabled={isAuthenticating} className="w-full py-5 rounded-[1.5rem] bg-white text-black font-black uppercase tracking-widest text-sm flex items-center justify-center gap-3 active:scale-95 transition-all">
                         {isAuthenticating ? <Loader2 className="animate-spin" /> : <Lock />} UNLOCK INTERFACE
                     </button>
-                    <p className="mt-8 text-[8px] text-slate-700 font-black uppercase tracking-widest">Protocol v7.5 • Hardened Biometric Gateway</p>
+                    <p className="mt-8 text-[8px] text-slate-700 font-black uppercase tracking-widest">Protocol v7.5 • Hardened Gateway</p>
                 </div>
                 <style>{`@keyframes scan { 0% { transform: translateY(0); opacity: 0; } 50% { opacity: 1; } 100% { transform: translateY(128px); opacity: 0; } } .animate-scan { animation: scan 1.5s ease-in-out infinite; }`}</style>
             </div>
@@ -309,8 +305,8 @@ function App() {
     }
 
     return (
-        <div className="h-screen w-screen bg-slate-950 text-white flex flex-col relative overflow-hidden">
-            <div className="flex-1 relative">
+        <div className="h-[100dvh] w-screen bg-slate-950 text-white flex flex-col relative overflow-hidden">
+            <div className="flex-1 relative w-full overflow-hidden">
                 {activeTab === Tab.MAP && <MapView location={userState.location || DEFAULT_LOCATION} spawns={spawns} collectedIds={userState.collectedIds} hotspots={allHotspots} />}
                 {activeTab === Tab.HUNT && <HuntView location={userState.location || DEFAULT_LOCATION} spawns={spawns} collectedIds={userState.collectedIds} onCollect={handleCollect} hotspots={allHotspots} />}
                 {activeTab === Tab.WALLET && <WalletView userState={userState} onAdReward={() => {}} onInvite={() => {}} />}
@@ -321,9 +317,18 @@ function App() {
                 }} onPayCampaign={(id) => updateCampaignStatusFirebase(id, AdStatus.ACTIVE)} isTestMode={isTestMode} />}
                 {activeTab === Tab.ADMIN && <AdminView allCampaigns={campaigns} customHotspots={customHotspots} onSaveHotspots={async (h) => { for (const item of h) await saveHotspotFirebase(item); }} onDeleteHotspot={deleteHotspotFirebase} onDeleteCampaign={deleteCampaignFirebase} onApprove={(id) => updateCampaignStatusFirebase(id, AdStatus.ACTIVE)} onReject={(id) => updateCampaignStatusFirebase(id, AdStatus.REJECTED)} onResetMyAccount={() => resetUserInFirebase(userState.telegramId!)} isTestMode={isTestMode} onToggleTestMode={() => setIsTestMode(!isTestMode)} />}
             </div>
-            {(activeTab === Tab.MAP || activeTab === Tab.HUNT) && <button onClick={() => setShowAIChat(true)} className="fixed right-6 bottom-24 z-[999] w-12 h-12 bg-cyan-600 rounded-full flex items-center justify-center shadow-lg animate-bounce"><Sparkles className="text-white" size={20} /></button>}
+            
+            {(activeTab === Tab.MAP || activeTab === Tab.HUNT) && (
+                <button onClick={() => setShowAIChat(true)} className="fixed right-6 bottom-24 z-[999] w-12 h-12 bg-cyan-600 rounded-full flex items-center justify-center shadow-lg animate-bounce active:scale-90">
+                    <Sparkles className="text-white" size={20} />
+                </button>
+            )}
+            
             {showAIChat && <AIChat onClose={() => setShowAIChat(false)} />}
-            <div className="fixed bottom-0 left-0 right-0 z-[9999] p-4 mb-2"><Navigation currentTab={activeTab} onTabChange={setActiveTab} userWalletAddress={userWalletAddress} /></div>
+            
+            <div className="shrink-0 z-[9999] w-full p-4 pb-6 bg-slate-950/80 backdrop-blur-md border-t border-white/5">
+                <Navigation currentTab={activeTab} onTabChange={setActiveTab} userWalletAddress={userWalletAddress} />
+            </div>
         </div>
     );
 }
