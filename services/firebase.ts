@@ -227,19 +227,15 @@ export const updateCampaignStatusFirebase = async (id: string, s: string) => upd
 export const deleteCampaignFirebase = async (id: string) => deleteDoc(doc(db, "campaigns", id));
 export const updateUserWalletInFirebase = async (id: number, w: string) => updateDoc(doc(db, "users", id.toString()), { walletAddress: w });
 
-// FIX: Folosim Cloud Function pentru resetare definitivă în baza de date
 export const resetUserInFirebase = async (targetUserId: number) => {
-    const tg = window.Telegram?.WebApp;
-    const adminTgId = tg?.initDataUnsafe?.user?.id;
-    if (!adminTgId) return false;
-
-    const resetFunc = httpsCallable(functions, 'resetUserProtocol');
-    await resetFunc({ 
-        targetUserId, 
-        adminTgId,
-        initData: window.Telegram.WebApp.initData 
-    });
-    return true;
+    try {
+        const resetFunc = httpsCallable(functions, 'resetUserProtocol');
+        await resetFunc({ targetUserId });
+        return true;
+    } catch (e) {
+        console.error("Reset trigger failed", e);
+        return false;
+    }
 };
 
 export const processWithdrawTON = async (tgId: number, amount: number) => {
