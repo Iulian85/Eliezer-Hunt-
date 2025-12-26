@@ -1,4 +1,3 @@
-
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { initializeApp, getApps } from 'firebase-admin/app';
@@ -79,14 +78,12 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
     if (!snap) return;
     const claim = snap.data();
     
-    // Asigurăm consistența ID-ului (String pentru document ID)
     const userIdStr = claim.userId.toString();
     const userRef = db.collection('users').doc(userIdStr);
     
     const value = Number(claim.claimedValue || 0);
     const tonValue = Number(claim.tonReward || 0);
 
-    // Schema de bază pentru a evita erori de "missing fields"
     const updates: any = {
         telegramId: Number(claim.userId),
         balance: FieldValue.increment(value),
@@ -94,12 +91,10 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
         lastActive: FieldValue.serverTimestamp()
     };
 
-    // Colectare ID-uri pentru monede unice
     if (claim.spawnId && !claim.spawnId.startsWith('ad-')) {
         updates.collectedIds = FieldValue.arrayUnion(claim.spawnId);
     }
 
-    // Actualizăm sub-balanțele specifice pentru Airdrop Estimation
     switch (claim.category) {
         case 'URBAN': 
         case 'MALL': 
@@ -127,14 +122,12 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
             break;
     }
 
-    // Folosim SET cu MERGE pentru a crea documentul dacă hunter-ul e nou
     try {
         await userRef.set(updates, { merge: true });
         await snap.ref.update({ 
             status: 'verified', 
             processedAt: FieldValue.serverTimestamp() 
         });
-        console.log(`Successfully processed claim for user ${userIdStr}: +${value} ELZR`);
     } catch (err) {
         console.error("Critical Trigger Failure:", err);
     }
