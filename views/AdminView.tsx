@@ -92,16 +92,30 @@ export const AdminView: React.FC<AdminViewProps> = ({
     };
 
     const handleSystemReset = async () => {
-        if (window.confirm("CRITICAL PROTOCOL: Are you sure you want to reset your own balance and progress to zero? (Identity will be kept)")) {
-            setIsResetting(true);
-            try {
-                // onResetMyAccount() din App.tsx apelează resetUserInFirebase pentru adminId
-                await onResetMyAccount();
-            } catch (e: any) {
-                alert("Reset system failure: " + e.message);
-            } finally {
-                setIsResetting(false);
+        const tg = window.Telegram?.WebApp;
+        if (!tg) {
+            alert("This action requires Telegram environment.");
+            return;
+        }
+
+        const confirmReset = () => {
+            if (window.confirm("CRITICAL PROTOCOL: Reset ALL your data (Balance, Wallet, Frens) to zero? Identity will be preserved.")) {
+                setIsResetting(true);
+                onResetMyAccount();
             }
+        };
+
+        // Solicita amprenta dacă este disponibilă
+        if (tg.BiometricManager?.available) {
+            tg.BiometricManager.authenticate({ reason: "Confirm nuclear reset of admin account" }, (success) => {
+                if (success) {
+                    confirmReset();
+                } else {
+                    alert("Biometric verification failed. Protocol aborted.");
+                }
+            });
+        } else {
+            confirmReset();
         }
     };
 
@@ -238,7 +252,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
             ) : (
                 allCampaigns.map(campaign => (
                     <div key={campaign.id} className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-lg mb-4">
-                        <div className="p-4 border-b border-slate-800 flex justify-between items-center">
+                        <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-800/20">
                             <div className="flex items-center gap-3">
                                 {campaign.data.logoUrl && (
                                     <div className="w-8 h-8 rounded-lg overflow-hidden border border-slate-700">
@@ -251,7 +265,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                                 </div>
                             </div>
                             <div className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-widest border
-                                ${campaign.data.status === AdStatus.PENDING_REVIEW ? 'bg-amber-500/10 text-amber-500 border-amber-500/20' :
+                                ${campaign.data.status === AdStatus.PENDING_REVIEW ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' :
                                   campaign.data.status === AdStatus.ACTIVE ? 'bg-green-500/10 text-green-400 border-green-500/20' :
                                   'bg-red-500/10 text-red-400 border-red-500/20'}
                             `}>
@@ -646,10 +660,10 @@ export const AdminView: React.FC<AdminViewProps> = ({
                             <button 
                                 onClick={handleSystemReset} 
                                 disabled={isResetting}
-                                className="w-full py-3 bg-red-600 hover:bg-red-500 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-50"
+                                className="w-full py-3 bg-red-600 hover:bg-red-500 text-white rounded-xl font-black text-xs flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-50 shadow-lg shadow-red-900/20"
                             >
-                                {isResetting ? <Loader2 className="animate-spin" size={16}/> : <RefreshCw size={16}/>}
-                                RESET MY ACCOUNT
+                                {isResetting ? <Loader2 className="animate-spin" size={16}/> : <Fingerprint size={16}/>}
+                                RESET MY ACCOUNT (BIOMETRIC)
                             </button>
                         </div>
                     </div>

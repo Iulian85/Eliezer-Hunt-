@@ -1,6 +1,6 @@
 
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
-import { onDocumentCreated } from 'firebase-functions/v2/functions/firestore'; // Fix import path for onDocumentCreated
+import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { GoogleGenAI } from '@google/genai';
@@ -12,11 +12,10 @@ if (getApps().length === 0) {
 const db = getFirestore();
 
 /**
- * REZOLVARE RESET ADMIN:
- * Această funcție nu mai șterge documentul (deleteDoc), ci face un reset la zero pe toate balanțele.
+ * PROTOCOL RESET ELZR ADMIN (7319782429)
+ * Resetează progresul și balanța la zero absolut, păstrând identitatea profilului.
  */
 export const resetUserProtocol = onCall(async (request) => {
-    // 1. Validăm ID-ul trimis de pe Frontend
     const targetUserId = request.data?.targetUserId;
     if (!targetUserId) {
         throw new HttpsError('invalid-argument', 'Missing targetUserId');
@@ -26,9 +25,9 @@ export const resetUserProtocol = onCall(async (request) => {
     const idNum = parseInt(idStr);
 
     try {
-        console.log(`[SYSTEM] Starting Soft Reset for Admin: ${idStr}`);
+        console.log(`[PROTOCOL-ELZR] Initiating Nuclear Reset for ID: ${idStr}`);
 
-        // 2. Definirea obiectului de reset conform cerințelor exacte
+        // Lista exactă de 18 câmpuri pentru resetarea totală
         const resetPayload = {
             balance: 0,
             tonBalance: 0,
@@ -48,14 +47,14 @@ export const resetUserProtocol = onCall(async (request) => {
             rareItemsCollected: 0,
             eventItemsCollected: 0,
             referrals: 0,
-            lastActive: FieldValue.serverTimestamp() // Păstrăm tot restul: username, joinedAt, etc.
+            lastActive: FieldValue.serverTimestamp()
         };
 
-        // 3. Update profil utilizator - Folosim set merge:true ca să nu crape niciodată (internal error fix)
+        // Folosim set cu merge:true pentru a evita eroarea 'internal' în cazul în care documentul e blocat sau corupt
         await db.collection('users').doc(idStr).set(resetPayload, { merge: true });
 
-        // 4. Curățare Claims & Referrals (Batch Delete)
-        const deleteHistory = async (col: string, field: string) => {
+        // Helper pentru curățare loturi (batch)
+        const purgeData = async (col: string, field: string) => {
             const snap = await db.collection(col).where(field, 'in', [idStr, idNum]).get();
             if (snap.empty) return;
             const batch = db.batch();
@@ -63,16 +62,15 @@ export const resetUserProtocol = onCall(async (request) => {
             await batch.commit();
         };
 
-        // Ștergem doar claims făcute de admin și referrali unde el este referrer
-        await deleteHistory('claims', 'userId');
-        await deleteHistory('ad_claims', 'userId');
-        await deleteHistory('referral_claims', 'referrerId');
+        // Curățăm istoricul de extrageri și referalii unde admin-ul este cel care a invitat
+        await purgeData('claims', 'userId');
+        await purgeData('ad_claims', 'userId');
+        await purgeData('referral_claims', 'referrerId');
 
-        return { success: true, message: "ADMIN_ACCOUNT_RESET_COMPLETE" };
-
+        return { success: true, message: "IDENTITY_PURGED_AND_REINITIALIZED" };
     } catch (e: any) {
-        console.error("FATAL RESET ERROR:", e);
-        throw new HttpsError('internal', `Backend error: ${e.message}`);
+        console.error("CRITICAL RESET ERROR:", e);
+        throw new HttpsError('internal', e.message);
     }
 });
 
