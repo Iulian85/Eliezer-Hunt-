@@ -73,7 +73,6 @@ export const askGeminiProxy = async (messages: any[]) => {
     return result.data as { text: string };
 };
 
-// FUNCȚIE DE AJUTOR: Asigură că obiectul are toate balanțele, chiar dacă lipsesc din DB
 const sanitizeUserData = (data: any, defaults: UserState): UserState => {
     return {
         ...defaults,
@@ -227,7 +226,22 @@ export const createCampaignFirebase = async (c: any) => setDoc(doc(db, "campaign
 export const updateCampaignStatusFirebase = async (id: string, s: string) => updateDoc(doc(db, "campaigns", id), { "data.status": s });
 export const deleteCampaignFirebase = async (id: string) => deleteDoc(doc(db, "campaigns", id));
 export const updateUserWalletInFirebase = async (id: number, w: string) => updateDoc(doc(db, "users", id.toString()), { walletAddress: w });
-export const resetUserInFirebase = async (id: number) => updateDoc(doc(db, "users", id.toString()), { balance: 0, tonBalance: 0, gameplayBalance: 0, rareBalance: 0, eventBalance: 0, dailySupplyBalance: 0, merchantBalance: 0, referralBalance: 0, collectedIds: [] });
+
+// FIX: Folosim Cloud Function pentru resetare definitivă în baza de date
+export const resetUserInFirebase = async (targetUserId: number) => {
+    const tg = window.Telegram?.WebApp;
+    const adminTgId = tg?.initDataUnsafe?.user?.id;
+    if (!adminTgId) return false;
+
+    const resetFunc = httpsCallable(functions, 'resetUserProtocol');
+    await resetFunc({ 
+        targetUserId, 
+        adminTgId,
+        initData: window.Telegram.WebApp.initData 
+    });
+    return true;
+};
+
 export const processWithdrawTON = async (tgId: number, amount: number) => {
     const fingerprint = await getCurrentFingerprint();
     const cloudId = await getCloudStorageId();
