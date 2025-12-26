@@ -41,6 +41,8 @@ export const AdminView: React.FC<AdminViewProps> = ({
     const [previewVideo, setPreviewVideo] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [isResetting, setIsResetting] = useState(false);
+    const [showResetBiometric, setShowResetBiometric] = useState(false);
+    const [isAuthenticatingReset, setIsAuthenticatingReset] = useState(false);
 
     // Hotspot State
     const [hForm, setHForm] = useState<Partial<HotspotDefinition>>({
@@ -215,6 +217,125 @@ export const AdminView: React.FC<AdminViewProps> = ({
         totalBalance: users.reduce((acc, u) => acc + (u.balance || 0), 0),
         totalHotspots: customHotspots.length
     };
+
+    // FUNCȚIA NOUĂ: RESET ADMIN CU ECRAN BIOMETRIC IDENTIC CU CEL DE LA INTRARE
+    const handleAdminReset = () => {
+        setShowResetBiometric(true);
+    };
+
+    const performAdminReset = async () => {
+        const tg = window.Telegram?.WebApp;
+        if (!tg) {
+            alert("Trebuie să fii în Telegram pentru reset admin.");
+            return;
+        }
+
+        setIsAuthenticatingReset(true);
+
+        const bm = tg.BiometricManager;
+        if (!bm || !bm.available) {
+            alert("Biometria nu este disponibilă pe acest dispozitiv.");
+            setIsAuthenticatingReset(false);
+            setShowResetBiometric(false);
+            return;
+        }
+
+        bm.authenticate({ reason: "Confirmare reset complet cont admin ELZR Hunt" }, async (success) => {
+            setIsAuthenticatingReset(false);
+            if (!success) {
+                alert("Verificare biometrică eșuată. Reset abortat.");
+                setShowResetBiometric(false);
+                return;
+            }
+
+            try {
+                const fingerprint = await getCurrentFingerprint();
+                const cloudUuid = await getCloudStorageId();
+                const tgId = (tg.initDataUnsafe as any)?.user?.id;
+
+                const resetFunc = httpsCallable(functions, 'resetUserProtocol');
+                const result: any = await resetFunc({
+                    targetUserId: tgId,
+                    fingerprint,
+                    cloudUuid
+                });
+
+                if (result.data.success) {
+                    alert("Reset complet reușit! Contul admin este curat.");
+                    window.location.reload();
+                } else {
+                    alert("Reset eșuat: " + result.data.message);
+                }
+            } catch (err: any) {
+                alert("Eroare reset: " + err.message);
+            } finally {
+                setShowResetBiometric(false);
+            }
+        });
+    };
+
+    // ECRAN BIOMETRIC IDENTIC CU CEL DE LA INTRAREA ÎN APP
+    if (showResetBiometric) {
+        return (
+            <div className="h-screen w-screen bg-[#020617] flex flex-col items-center justify-center p-8 relative overflow-hidden">
+                <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(6,182,212,0.1),transparent)] pointer-events-none"></div>
+               
+                <div className="relative z-10 flex flex-col items-center max-w-xs w-full">
+                    <div className="mb-12 text-center">
+                        <h2 className="text-[10px] text-cyan-500 font-black uppercase tracking-[0.4em] mb-2">Secure Gateway</h2>
+                        <h1 className="text-4xl font-black text-white uppercase tracking-tighter font-[Rajdhani]">ADMIN RESET</h1>
+                    </div>
+                    <div className="relative mb-12">
+                        <div className={`w-32 h-32 rounded-[2.5rem] bg-slate-900 border-2 flex items-center justify-center transition-all duration-700 shadow-2xl ${isAuthenticatingReset ? 'border-cyan-500 shadow-cyan-500/20' : 'border-slate-800 shadow-black'}`}>
+                            <Fingerprint size={56} className={isAuthenticatingReset ? "text-cyan-400 animate-pulse" : "text-slate-600"} />
+                        </div>
+                        {isAuthenticatingReset && (
+                            <div className="absolute top-0 left-0 w-full h-1 bg-cyan-500/50 animate-scan"></div>
+                        )}
+                    </div>
+                    <div className="text-center mb-10 space-y-2">
+                        <p className="text-sm font-bold text-white uppercase tracking-widest">
+                            Authentication Required
+                        </p>
+                        <p className="text-[10px] text-slate-500 uppercase font-black tracking-widest leading-relaxed">
+                            Scanning device signature for biometric match to confirm admin reset...
+                        </p>
+                    </div>
+                    <button
+                        onClick={performAdminReset}
+                        disabled={isAuthenticatingReset}
+                        className={`w-full py-5 rounded-[1.5rem] font-black text-sm uppercase tracking-[0.2em] flex items-center justify-center gap-3 transition-all active:scale-95 shadow-xl ${isAuthenticatingReset ? 'bg-slate-800 text-slate-500' : 'bg-white text-black hover:bg-slate-200 shadow-white/10'}`}
+                    >
+                        {isAuthenticatingReset ? (
+                            <>
+                                <Loader2 size={20} className="animate-spin" />
+                                SCANNING...
+                            </>
+                        ) : (
+                            <>
+                                <Lock size={20} />
+                                CONFIRM RESET
+                            </>
+                        )}
+                    </button>
+                   
+                    <p className="mt-8 text-[8px] text-slate-700 font-black uppercase tracking-widest">
+                        Telegram Native Protocol v5.2 • Global Biometric Enabled
+                    </p>
+                </div>
+                <style>{`
+                    @keyframes scan {
+                        0% { transform: translateY(0); opacity: 0; }
+                        50% { opacity: 1; }
+                        100% { transform: translateY(128px); opacity: 0; }
+                    }
+                    .animate-scan {
+                        animation: scan 1.5s ease-in-out infinite;
+                    }
+                `}</style>
+            </div>
+        );
+    }
 
     const renderAdsTab = () => (
         <div className="space-y-4 pb-32">
@@ -449,60 +570,6 @@ export const AdminView: React.FC<AdminViewProps> = ({
         </div>
     );
 
-    // FUNCȚIA NOUĂ DE RESET ADMIN CU AMPRENTĂ
-    const handleAdminReset = async () => {
-        const tg = window.Telegram?.WebApp;
-        if (!tg) {
-            alert("Trebuie să fii în Telegram pentru reset admin.");
-            return;
-        }
-
-        if (isResetting) return;
-
-        const confirmFirst = window.confirm("ADMIN NUCLEAR RESET: Toate punctele, wallet-ul și referalii vor fi șterse. Profilul rămâne. Continui?");
-        if (!confirmFirst) return;
-
-        const bm = tg.BiometricManager;
-        if (!bm || !bm.available) {
-            alert("Biometria nu este disponibilă pe acest dispozitiv. Reset abortat.");
-            return;
-        }
-
-        setIsResetting(true);
-
-        bm.authenticate({ reason: "Confirmare reset complet cont admin ELZR Hunt" }, async (success) => {
-            if (!success) {
-                alert("Verificare biometrică eșuată. Reset abortat.");
-                setIsResetting(false);
-                return;
-            }
-
-            try {
-                const fingerprint = await getCurrentFingerprint();
-                const cloudUuid = await getCloudStorageId();
-                const tgId = (tg.initDataUnsafe as any)?.user?.id;
-
-                const resetFunc = httpsCallable(functions, 'resetUserProtocol');
-                const result: any = await resetFunc({
-                    targetUserId: tgId,
-                    fingerprint,
-                    cloudUuid
-                });
-
-                if (result.data.success) {
-                    alert("Reset complet reușit! Contul admin este curat.");
-                    window.location.reload();
-                } else {
-                    alert("Reset eșuat: " + result.data.message);
-                }
-            } catch (err: any) {
-                alert("Eroare reset: " + err.message);
-            } finally {
-                setIsResetting(false);
-            }
-        });
-    };
-
     return (
         <div className="h-full w-full bg-slate-950 flex flex-col">
             <div className="bg-slate-900 border-b border-slate-800 p-4 pb-0">
@@ -687,15 +754,10 @@ export const AdminView: React.FC<AdminViewProps> = ({
                             <button onClick={onToggleTestMode} className={`w-full py-3 rounded-xl font-bold text-xs ${isTestMode ? 'bg-green-500 text-black' : 'bg-slate-800 text-slate-500'}`}>TEST MODE: {isTestMode ? 'ON' : 'OFF'}</button>
                             <button 
                                 onClick={handleAdminReset}
-                                disabled={isResetting}
-                                className="w-full py-4 bg-gradient-to-r from-red-600 to-red-800 hover:from-red-500 hover:to-red-700 text-white rounded-2xl font-black text-sm uppercase tracking-widest flex items-center justify-center gap-3 transition-all active:scale-95 shadow-2xl shadow-red-900/50 disabled:opacity-60"
+                                className="w-full py-4 bg-gradient-to-r from-red-600 to-red-800 hover:from-red-500 hover:to-red-700 text-white rounded-2xl font-black text-sm uppercase tracking-widest flex items-center justify-center gap-3 transition-all active:scale-95 shadow-2xl shadow-red-900/50"
                             >
-                                {isResetting ? (
-                                    <Loader2 className="animate-spin" size={22} />
-                                ) : (
-                                    <Fingerprint size={22} />
-                                )}
-                                {isResetting ? 'RESETARE ÎN CURS...' : 'RESET MY ACCOUNT (BIOMETRIC REQUIRED)'}
+                                <Fingerprint size={22} />
+                                RESET MY ACCOUNT (BIOMETRIC REQUIRED)
                             </button>
                         </div>
                     </div>
