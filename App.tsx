@@ -142,7 +142,6 @@ function App() {
 
                 if (synced.isBanned) setIsBlocked(true);
 
-                // FIX: Trimitem defaultUserState pentru a asigura merge-ul corect la refresh
                 subscribeToUserProfile(parseInt(userId), defaultUserState, (updatedData) => {
                     setUserState(updatedData);
                     if (updatedData.isBanned) setIsBlocked(true);
@@ -239,6 +238,23 @@ function App() {
         tg.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(inviteLink)}&text=Hunt crypto!`);
     }, []);
 
+    const handleResetMyAccountApp = async () => {
+        if (userState.telegramId) {
+            try {
+                const success = await resetUserInFirebase(userState.telegramId);
+                if (success) {
+                    alert("Account Reset Successful on Server.");
+                    window.location.reload();
+                } else {
+                    alert("Server-side reset rejected. Check if you are authorized.");
+                }
+            } catch (e: any) {
+                alert("Error during reset: " + e.message);
+                throw e;
+            }
+        }
+    };
+
     if (isLoading) return <div className="h-screen w-screen bg-slate-950 flex items-center justify-center text-white font-mono"><div className="w-8 h-8 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin"></div></div>;
 
     if (isBlocked && !isAdmin) return <div className="h-screen w-screen bg-slate-950 flex items-center justify-center p-8 text-center text-white font-black uppercase">Security Alert: Identity Locked</div>;
@@ -263,7 +279,7 @@ function App() {
                 {activeTab === Tab.WALLET && <WalletView userState={userState} onAdReward={(amt) => handleCollect('ad-' + Date.now(), amt, 'AD_REWARD')} onInvite={handleInvite} />}
                 {activeTab === Tab.FRENS && <FrensView referralCount={userState.referrals} referralNames={userState.referralNames} onInvite={handleInvite} />}
                 {activeTab === Tab.ADS && <AdsView userLocation={userState.location} collectedIds={userState.collectedIds} myCampaigns={campaigns.filter(c => c.ownerWallet === userWalletAddress)} onSubmitApplication={async (coords, count, mult, price, data) => { await createCampaignFirebase({ id: `camp-${Date.now()}`, ownerWallet: userWalletAddress || 'anon', targetCoords: coords, count, multiplier: mult, durationDays: data.durationDays, totalPrice: price, data: { ...data, status: AdStatus.PENDING_REVIEW }, timestamp: Date.now() }); }} onPayCampaign={(id) => updateCampaignStatusFirebase(id, AdStatus.ACTIVE)} isTestMode={isTestMode} />}
-                {activeTab === Tab.ADMIN && <AdminView allCampaigns={campaigns} customHotspots={customHotspots} onSaveHotspots={async (newH) => { for (const h of newH) await saveHotspotFirebase(h); }} onDeleteHotspot={deleteHotspotFirebase} onDeleteCampaign={deleteCampaignFirebase} onApprove={(id) => updateCampaignStatusFirebase(id, AdStatus.ACTIVE)} onReject={(id) => updateCampaignStatusFirebase(id, AdStatus.REJECTED)} onResetMyAccount={async () => { if (userState.telegramId) { await resetUserInFirebase(userState.telegramId); window.location.reload(); } }} isTestMode={isTestMode} onToggleTestMode={() => setIsTestMode(!isTestMode)} />}
+                {activeTab === Tab.ADMIN && <AdminView allCampaigns={campaigns} customHotspots={customHotspots} onSaveHotspots={async (newH) => { for (const h of newH) await saveHotspotFirebase(h); }} onDeleteHotspot={deleteHotspotFirebase} onDeleteCampaign={deleteCampaignFirebase} onApprove={(id) => updateCampaignStatusFirebase(id, AdStatus.ACTIVE)} onReject={(id) => updateCampaignStatusFirebase(id, AdStatus.REJECTED)} onResetMyAccount={handleResetMyAccountApp} isTestMode={isTestMode} onToggleTestMode={() => setIsTestMode(!isTestMode)} />}
             </div>
             {(activeTab === Tab.MAP || activeTab === Tab.HUNT) && <button onClick={() => setShowAIChat(true)} className="fixed right-6 bottom-24 z-[999] w-12 h-12 bg-cyan-600 rounded-full flex items-center justify-center border border-cyan-400 animate-bounce shadow-xl"><Sparkles className="text-white" size={20} /></button>}
             {showAIChat && <AIChat onClose={() => setShowAIChat(false)} />}

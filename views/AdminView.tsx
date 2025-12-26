@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Campaign, AdStatus, HotspotDefinition, HotspotCategory, Coordinate } from '../types';
 import { ShieldCheck, Check, X, Play, Clock, AlertTriangle, Users, Ban, Wallet, Globe, Search, Lock, Unlock, LayoutDashboard, Megaphone, BarChart3, Settings, Trash2, UserX, FlaskConical, MapPin, Plus, Edit2, Coins, Map as MapIcon, Upload, Image as ImageIcon, Loader2, Gift, Calendar, Activity, History, RotateCcw, AlertCircle, Fingerprint, RefreshCw } from 'lucide-react';
@@ -14,7 +15,7 @@ interface AdminViewProps {
     onDeleteCampaign: (id: string) => void;
     onApprove: (id: string) => void;
     onReject: (id: string) => void;
-    onResetMyAccount: () => void;
+    onResetMyAccount: () => Promise<void>;
     isTestMode: boolean;
     onToggleTestMode: () => void;
 }
@@ -34,6 +35,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
     const [activeTab, setActiveTab] = useState<'dashboard' | 'users' | 'ads' | 'hotspots' | 'giftboxes' | 'system'>('dashboard');
     const [users, setUsers] = useState<any[]>([]);
     const [isLoadingUsers, setIsLoadingUsers] = useState(false);
+    const [isResetting, setIsResetting] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [previewVideo, setPreviewVideo] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -76,11 +78,29 @@ export const AdminView: React.FC<AdminViewProps> = ({
         }
     };
 
+    const handleResetAction = async () => {
+        if (isResetting) return;
+        if (window.confirm("RESET PROTOCOL: This will PERMANENTLY wipe your Firestore document points and history. Continue?")) {
+            setIsResetting(true);
+            try {
+                await onResetMyAccount();
+            } catch (e: any) {
+                alert("Reset Failed: " + (e.message || "Unknown error"));
+            } finally {
+                setIsResetting(false);
+            }
+        }
+    };
+
     const handleResetUserAccount = async (id: string) => {
         if (window.confirm(`ACCOUNT RESET: Clear all extraction progress for user ${id}?`)) {
-            await resetUserInFirebase(parseInt(id));
-            alert("Account progress has been reset.");
-            loadUsers();
+            const success = await resetUserInFirebase(parseInt(id));
+            if (success) {
+                alert("Account progress has been reset on server.");
+                loadUsers();
+            } else {
+                alert("Reset request failed.");
+            }
         }
     };
 
@@ -622,7 +642,15 @@ export const AdminView: React.FC<AdminViewProps> = ({
                         <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2"><AlertTriangle className="text-red-500" /> DANGER ZONE</h2>
                         <div className="space-y-4">
                             <button onClick={onToggleTestMode} className={`w-full py-3 rounded-xl font-bold text-xs ${isTestMode ? 'bg-green-500 text-black' : 'bg-slate-800 text-slate-500'}`}>TEST MODE: {isTestMode ? 'ON' : 'OFF'}</button>
-                            <button onClick={onResetMyAccount} className="w-full py-3 bg-red-600 rounded-xl font-bold text-xs">RESET MY ACCOUNT</button>
+                            <button 
+                                onClick={handleResetAction} 
+                                disabled={isResetting}
+                                className="w-full py-4 bg-red-600 text-white rounded-xl font-black uppercase tracking-widest text-xs shadow-lg shadow-red-950/40 flex items-center justify-center gap-2"
+                            >
+                                {isResetting ? <Loader2 className="animate-spin" /> : <RotateCcw size={16} />}
+                                {isResetting ? "RESETTING SERVER DOC..." : "RESET MY ACCOUNT"}
+                            </button>
+                            <p className="text-[9px] text-red-400 font-bold uppercase text-center mt-2 tracking-tighter">Warning: This bypasses local state and wipes your central Firestore document.</p>
                         </div>
                     </div>
                 )}

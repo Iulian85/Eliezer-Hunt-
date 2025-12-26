@@ -49,24 +49,31 @@ async function verifyDeviceBinding(userId: string, incomingFingerprint: string, 
     return true;
 }
 
-// FUNCȚIE NOUĂ: Resetare securizată de pe Server
+// Resetare securizată de pe Server
 export const resetUserProtocol = onCall(async (request) => {
     const { data } = request;
     if (!(await validateAndCheckReplay(data.initData))) {
         throw new HttpsError('unauthenticated', 'Session Expired');
     }
 
-    // Verificăm dacă cel care cere resetarea este adminul
-    const adminRef = db.collection('users').doc(data.adminTgId.toString());
+    // Verificăm dacă cel care cere resetarea este autorizat
+    const adminTgId = data.adminTgId.toString();
+    const adminRef = db.collection('users').doc(adminTgId);
     const adminDoc = await adminRef.get();
-    if (!adminDoc.exists || adminDoc.data()?.walletAddress !== ADMIN_WALLET) {
-        throw new HttpsError('permission-denied', 'Unauthorized. Admin access required.');
+    
+    // Verificăm wallet-ul de admin (string comparison robust)
+    const userWallet = (adminDoc.data()?.walletAddress || "").toLowerCase();
+    const targetAdminWallet = ADMIN_WALLET.toLowerCase();
+
+    if (!adminDoc.exists || userWallet !== targetAdminWallet || targetAdminWallet === "") {
+        throw new HttpsError('permission-denied', `Unauthorized. Admin wallet mismatch. [${userWallet}] vs [${targetAdminWallet}]`);
     }
 
     const targetUserId = data.targetUserId.toString();
     const userRef = db.collection('users').doc(targetUserId);
 
-    await userRef.update({
+    // Folosim set cu merge: false pentru a face WIPE total la balanțe, nu doar update
+    await userRef.set({
         balance: 0,
         tonBalance: 0,
         gameplayBalance: 0,
@@ -78,7 +85,7 @@ export const resetUserProtocol = onCall(async (request) => {
         collectedIds: [],
         lastDailyClaim: 0,
         lastActive: FieldValue.serverTimestamp()
-    });
+    }, { merge: true }); // Merge true dar forțăm valorile la 0
 
     return { success: true };
 });
