@@ -42,7 +42,6 @@ async function getCurrentFingerprint() {
     return result.visitorId;
 }
 
-// Helper pentru a obține UUID-ul din CloudStorage (Securitate Strat 2)
 export const getCloudStorageId = (): Promise<string> => {
     return new Promise((resolve) => {
         const tg = window.Telegram?.WebApp;
@@ -86,7 +85,7 @@ export const syncUserWithFirebase = async (
     userData: { id: number, username?: string, firstName?: string, lastName?: string, photoUrl?: string }, 
     localState: UserState, 
     fingerprint: string,
-    cloudId: string, // Nou ID de securitate
+    cloudId: string,
     initDataRaw?: string,
     currentLocation?: Coordinate
 ): Promise<UserState> => {
@@ -103,11 +102,18 @@ export const syncUserWithFirebase = async (
                 username: userData.username || `Hunter_${userData.id.toString().slice(-4)}`,
                 photoUrl: userData.photoUrl || '',
                 deviceFingerprint: fingerprint,
-                cloudStorageId: cloudId, // BINDING SECUNDAR
+                cloudStorageId: cloudId,
                 lastInitData: initDataRaw,
                 lastLocation: currentLocation || null,
                 isBanned: false,
                 balance: 0,
+                tonBalance: 0,
+                gameplayBalance: 0,
+                rareBalance: 0,
+                eventBalance: 0,
+                dailySupplyBalance: 0,
+                merchantBalance: 0,
+                referralBalance: 0,
                 collectedIds: [],
                 joinedAt: serverTimestamp(),
                 lastActive: serverTimestamp()
@@ -118,7 +124,6 @@ export const syncUserWithFirebase = async (
     } catch (e) { return localState; }
 };
 
-// Log-am inceputul reclamei pe server pentru a preveni timestamp spoofing (Vulnerabilitate Recomandată)
 export const logAdStartFirebase = async (tgId: number) => {
     if (!tgId) return;
     try {
@@ -139,6 +144,7 @@ export const saveCollectionToFirebase = async (tgId: number, spawnId: string, va
             userId: tgId,
             spawnId,
             claimedValue: value,
+            category: category || "URBAN", // SALVĂM CATEGORIA PENTRU BACKEND
             timestamp: serverTimestamp(),
             location: captureLocation || null,
             challenge: challenge || null,
@@ -165,7 +171,7 @@ export const requestAdRewardFirebase = async (tgId: number, rewardValue: number)
 
 export const processReferralReward = async (referrerId: string, newUserId: number, newUserName: string) => {
     try {
-        await addDoc(collection(db, "referral_claims"), { // Actualizat conform firestore.rules
+        await addDoc(collection(db, "referral_claims"), {
             referrerId,
             referredId: newUserId,
             referredName: newUserName,

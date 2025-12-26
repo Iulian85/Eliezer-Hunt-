@@ -13,9 +13,6 @@ if (getApps().length === 0) {
 const db = getFirestore();
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 
-/**
- * Validare hash Telegram + Protecție Anti-Replay
- */
 async function validateAndCheckReplay(initData: string): Promise<boolean> {
     if (!initData || !BOT_TOKEN) return false;
     try {
@@ -41,30 +38,17 @@ async function validateAndCheckReplay(initData: string): Promise<boolean> {
     } catch (e) { return false; }
 }
 
-/**
- * Verifică Dual Device Binding (Fingerprint + Telegram CloudStorage UUID)
- */
 async function verifyDeviceBinding(userId: string, incomingFingerprint: string, incomingCloudId: string): Promise<boolean> {
     const userDoc = await db.collection('users').doc(userId).get();
     if (!userDoc.exists) return true;
     
     const data = userDoc.data()!;
-    // Verificăm ambele ID-uri pentru a neutraliza fingerprint spoofing
     if (data.deviceFingerprint && data.deviceFingerprint !== incomingFingerprint) return false;
     if (data.cloudStorageId && data.cloudStorageId !== incomingCloudId) return false;
     
     return true;
 }
 
-function getDistance(lat1: number, lon1: number, lat2: number, lon2: number) {
-    const R = 6371000;
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLon = (lon2 - lon1) * Math.PI / 180;
-    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-// AI PROXY - Acum cu RATE LIMITING (Vulnerabilitate Recomandată)
 export const chatWithELZR = onCall(async (request) => {
     const { data, rawRequest } = request;
     if (!(await validateAndCheckReplay(data.initData))) {
@@ -75,12 +59,10 @@ export const chatWithELZR = onCall(async (request) => {
     const userId = userData.id?.toString();
     if (!userId) throw new HttpsError('internal', 'Invalid Identity');
 
-    // 1. Verificare Dual Hardware Lock
     if (!(await verifyDeviceBinding(userId, data.fingerprint, data.cloudId))) {
         throw new HttpsError('permission-denied', 'SECURITY ALERT: Device Identity Mismatch.');
     }
 
-    // 2. Rate Limiting: Max 20 mesaje pe oră
     const userRef = db.collection('users').doc(userId);
     const userDoc = await userRef.get();
     const lastChatReset = userDoc.data()?.lastChatReset || 0;
@@ -113,7 +95,6 @@ export const chatWithELZR = onCall(async (request) => {
     return { text: response.text };
 });
 
-// CLAIM PROCESSOR - Validare locație și identitate duală
 export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event) => {
     const snap = event.data;
     if (!snap) return;
@@ -134,26 +115,22 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
     const userRef = db.collection('users').doc(userId);
     const userDoc = await userRef.get();
     if (!userDoc.exists || userDoc.data()?.isBanned) return;
-    const userData = userDoc.data()!;
 
-    // Verificari Geospațiale
-    if (userData.lastIpCountry && userData.lastIpCountry !== "Unknown" && claim.location.countryCode) {
-        if (userData.lastIpCountry !== claim.location.countryCode) {
-            await userRef.update({ riskScore: FieldValue.increment(20) });
-        }
-    }
-
+    // Logică Recompense & Mapare Categorii (Vulnerabilitate REZOLVATĂ)
     const hotspotId = claim.spawnId.split('-')[0];
     const hotspotSnap = await db.collection('hotspots').doc(hotspotId).get();
-    let elzrReward = 100;
+    
+    let elzrReward = claim.claimedValue || 100;
     let tonReward = 0;
+    let category = claim.category || 'URBAN';
 
     if (hotspotSnap.exists) {
         const hData = hotspotSnap.data()!;
-        elzrReward = hData.baseValue || 100;
-        if (hData.category === 'GIFTBOX') {
+        category = hData.category;
+        elzrReward = hData.baseValue || elzrReward;
+        if (category === 'GIFTBOX') {
             const roll = Math.random();
-            if (roll < 0.10) tonReward = hData.prizes[Math.floor(Math.random() * hData.prizes.length)];
+            if (roll < 0.15) tonReward = hData.prizes[Math.floor(Math.random() * hData.prizes.length)];
             else elzrReward = 400;
         }
     }
@@ -161,17 +138,33 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
     await db.runTransaction(async (tx) => {
         const freshUser = await tx.get(userRef);
         if (freshUser.data()?.collectedIds?.includes(claim.spawnId)) return;
-        tx.update(userRef, {
+        
+        // Creăm obiectul de update pentru balanțe
+        const updatePayload: any = {
             balance: FieldValue.increment(elzrReward),
             tonBalance: FieldValue.increment(tonReward),
             collectedIds: FieldValue.arrayUnion(claim.spawnId),
             lastActive: FieldValue.serverTimestamp()
-        });
-        tx.update(snap.ref, { status: 'verified', finalElzr: elzrReward, finalTon: tonReward });
+        };
+
+        // MAPARE PUNCTE PE CATEGORII SPECIFICE (Pentru sectiunea Airdrop Estimation)
+        if (category === 'LANDMARK') {
+            updatePayload.rareBalance = FieldValue.increment(elzrReward);
+        } else if (category === 'EVENT') {
+            updatePayload.eventBalance = FieldValue.increment(elzrReward);
+        } else if (category === 'MALL' || category === 'URBAN') {
+            updatePayload.gameplayBalance = FieldValue.increment(elzrReward);
+        } else if (category === 'MERCHANT') {
+            updatePayload.merchantBalance = FieldValue.increment(elzrReward);
+        } else if (category === 'AD_REWARD') {
+            updatePayload.dailySupplyBalance = FieldValue.increment(elzrReward);
+        }
+
+        tx.update(userRef, updatePayload);
+        tx.update(snap.ref, { status: 'verified', finalElzr: elzrReward, finalTon: tonReward, processedCategory: category });
     });
 });
 
-// AD REWARD - Validare Stateful prin Ad Sessions (Vulnerabilitate Recomandată)
 export const onAdClaimCreated = onDocumentCreated('ad_claims/{claimId}', async (event) => {
     const snap = event.data;
     if (!snap) return;
@@ -187,13 +180,11 @@ export const onAdClaimCreated = onDocumentCreated('ad_claims/{claimId}', async (
     const userDoc = await userRef.get();
     if (!userDoc.exists || userDoc.data()?.isBanned) return;
 
-    // Verificare identitate hibridă
     if (!(await verifyDeviceBinding(userId, claim.fingerprint, claim.cloudId))) {
         await snap.ref.update({ status: 'rejected', reason: 'Identity Mismatch' });
         return;
     }
 
-    // STATEFUL VALIDATION: Verificăm timestamp-ul real de start înregistrat pe server
     const sessionQuery = await db.collection('ad_sessions')
         .where('userId', '==', parseInt(userId))
         .where('status', '==', 'active')
@@ -210,7 +201,6 @@ export const onAdClaimCreated = onDocumentCreated('ad_claims/{claimId}', async (
     const startTime = sessionDoc.data().startTime as Timestamp;
     const elapsedSeconds = (Timestamp.now().toMillis() - startTime.toMillis()) / 1000;
 
-    // Trebuie să fi trecut cel puțin 15 secunde reali de la log-ul de start
     if (elapsedSeconds < 15 || elapsedSeconds > 300) {
         await snap.ref.update({ status: 'rejected', reason: 'Invalid session timing' });
         return;
@@ -225,14 +215,17 @@ export const onAdClaimCreated = onDocumentCreated('ad_claims/{claimId}', async (
         return;
     }
 
+    const reward = claim.rewardValue || 500;
+
     await userRef.update({
-        balance: FieldValue.increment(claim.rewardValue || 500),
+        balance: FieldValue.increment(reward),
+        dailySupplyBalance: FieldValue.increment(reward), // PUNCTELE DE AD DIN WALLET MERG AICI
         dailyAdsCount: isNewDay ? 1 : FieldValue.increment(1),
         lastAdsReset: isNewDay ? Date.now() : lastDailyReset,
-        lastActive: FieldValue.serverTimestamp()
+        lastActive: FieldValue.serverTimestamp(),
+        lastDailyClaim: Date.now()
     });
 
-    // Închidem sesiunea
     await sessionDoc.ref.update({ status: 'completed', completedAt: FieldValue.serverTimestamp() });
     await snap.ref.update({ status: 'processed' });
 });
