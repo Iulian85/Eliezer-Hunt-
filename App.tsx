@@ -5,7 +5,7 @@ import { Navigation } from './components/Navigation';
 import { Tab, UserState, SpawnPoint, Coordinate, Campaign, AdStatus, HotspotDefinition, HotspotCategory } from './types';
 import { GLOBAL_SPAWNS, GLOBAL_HOTSPOTS, ADMIN_WALLET_ADDRESS } from './constants';
 import { generateRandomSpawns } from './utils';
-import { Sparkles, ShieldAlert, Fingerprint, Lock, ShieldCheck, Loader2, SmartphoneNfc, RefreshCw, Send, Zap, Activity } from 'lucide-react';
+import { Sparkles, ShieldAlert, ExternalLink, UserX, AlertTriangle, Fingerprint, Lock, ShieldCheck, Loader2, SmartphoneNfc, RefreshCw, Settings, ShieldQuestion, Send } from 'lucide-react';
 import FingerprintJS from '@fingerprintjs/fingerprintjs';
 import {
     syncUserWithFirebase,
@@ -32,7 +32,7 @@ import { AdminView } from './views/AdminView';
 import { LeaderboardView } from './views/LeaderboardView';
 import { AIChat } from './components/AIChat';
 
-const DEFAULT_LOCATION: Coordinate = { lat: 44.4268, lng: 26.1025 }; // Default to Bucharest for context
+const DEFAULT_LOCATION: Coordinate = { lat: 20.0, lng: 0.0 };
 
 const defaultUserState: UserState = {
     balance: 0,
@@ -70,8 +70,11 @@ function App() {
     const [showAIChat, setShowAIChat] = useState(false);
     const [isBlocked, setIsBlocked] = useState(false);
    
+    // Security states
     const [isUnlocked, setIsUnlocked] = useState(false);
     const [isAuthenticating, setIsAuthenticating] = useState(false);
+    const [isNewUser, setIsNewUser] = useState(false);
+    const [biometricSupported, setBiometricSupported] = useState<boolean | null>(null);
     const [currentFingerprint, setCurrentFingerprint] = useState<string | null>(null);
 
     const isAdmin = useMemo(() => {
@@ -114,20 +117,23 @@ function App() {
 
             tg.ready();
             tg.expand();
-            if (tg.enableClosingConfirmation) tg.enableClosingConfirmation();
             setIsTelegram(true);
 
             const tgUser = tg.initDataUnsafe.user;
             const userIdNum = tgUser.id;
 
+            // CRITICAL: Pornim subscripția IMEDIAT pentru a primi datele live din Firebase
             unsubUser = subscribeToUserProfile(userIdNum, defaultUserState, (updatedData) => {
                 setUserState(prev => ({ ...prev, telegramId: userIdNum, ...updatedData }));
                 if (updatedData.isBanned) setIsBlocked(true);
-                setIsLoading(false);
+                setIsLoading(false); // Oprim loading-ul de îndată ce avem date de la Firebase
             });
 
+            // Inițializăm biometria
             if (tg.BiometricManager) {
-                tg.BiometricManager.init();
+                tg.BiometricManager.init(() => {
+                    setBiometricSupported(tg.BiometricManager.available);
+                });
             }
 
             try {
@@ -141,6 +147,7 @@ function App() {
 
                 const cloudId = await getCloudStorageId();
                 
+                // Sincronizăm restul datelor (username, photo, etc)
                 const userData = {
                     id: userIdNum,
                     username: tgUser.username,
@@ -149,10 +156,14 @@ function App() {
                     photoUrl: tgUser.photo_url
                 };
 
-                await syncUserWithFirebase(userData, defaultUserState, fingerprint, cloudId, tg.initData);
+                const synced = await syncUserWithFirebase(userData, defaultUserState, fingerprint, cloudId, tg.initData);
+                
+                if (!synced.deviceFingerprint || synced.joinedAt === synced.lastActive) {
+                    setIsNewUser(true);
+                }
 
                 const startParam = tg.initDataUnsafe.start_param || "";
-                if (startParam.startsWith('ref_')) {
+                if (startParam.startsWith('ref_') && !synced.hasClaimedReferral) {
                     const referrerId = startParam.replace('ref_', '');
                     if (referrerId !== userIdNum.toString()) {
                         const fullName = [tgUser.first_name, tgUser.last_name].filter(Boolean).join(' ');
@@ -174,11 +185,16 @@ function App() {
     }, []);
 
     const handleUnlock = async () => {
+        if (userState.biometricEnabled === false) {
+            setIsUnlocked(true);
+            return;
+        }
+
         const tg = window.Telegram?.WebApp;
         const bm = tg?.BiometricManager;
 
-        if (!bm || !bm.available) {
-            setIsUnlocked(true);
+        if (!bm) {
+            alert("This device environment does not support biometrics. Access denied.");
             return;
         }
 
@@ -186,24 +202,24 @@ function App() {
         if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
 
         const triggerAuth = () => {
-            bm.authenticate({ reason: "Biometric entry to ELZR Secure Node" }, (success) => {
+            bm.authenticate({ reason: "Biometric entry to Eliezer Hunt" }, (success) => {
                 setIsAuthenticating(false);
                 if (success) {
                     setIsUnlocked(true);
                     if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+                } else {
+                    alert("Authentication Failed. Fingerprint mismatch.");
                 }
             });
         };
 
         if (!bm.accessGranted) {
-            bm.requestAccess({ reason: "Verify extraction operative" }, (granted) => {
-                if (granted) triggerAuth();
-                else {
+            bm.requestAccess({ reason: "Access secure hunting network" }, (granted) => {
+                if (granted) {
+                    triggerAuth();
+                } else {
                     setIsAuthenticating(false);
-                    // Fallback if denied
-                    if (window.confirm("Biometric access denied. Proceed with legacy credentials?")) {
-                        setIsUnlocked(true);
-                    }
+                    alert("Biometric access is mandatory to play. Enable it in settings.");
                 }
             });
         } else {
@@ -224,11 +240,11 @@ function App() {
                 const newCoords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
                 setUserState(prev => ({ ...prev, location: newCoords }));
                 if (!initialSpawnDone.current) {
-                    setSpawns(prev => [...prev, ...generateRandomSpawns(newCoords, 10)]);
+                    setSpawns(prev => [...prev, ...generateRandomSpawns(newCoords, 8)]);
                     initialSpawnDone.current = true;
                 }
             },
-            () => {},
+            (err) => {},
             { enableHighAccuracy: true }
         );
         return () => navigator.geolocation.clearWatch(watchId);
@@ -252,19 +268,25 @@ function App() {
         const userIdNum = tg.initDataUnsafe?.user?.id;
         if (!userIdNum) return;
         const inviteLink = `https://t.me/Obadiah_Bot/eliezer?startapp=ref_${userIdNum}`;
-        const shareText = "Extract crypto in the real world with ELZR Hunt! 🚀 Join my tactical squad!";
+        const shareText = "Hunt crypto in the real world with Eliezer Hunt! 🚀 Join my extraction squad!";
         const fullUrl = `https://t.me/share/url?url=${encodeURIComponent(inviteLink)}&text=${encodeURIComponent(shareText)}`;
         tg.openTelegramLink(fullUrl);
     }, []);
 
+    const handleResetAccount = async () => {
+        if (window.confirm("RESET ACCOUNT: Are you sure you want to permanently delete all progress?")) {
+            if (userState.telegramId) {
+                await resetUserInFirebase(userState.telegramId);
+                window.location.reload();
+            }
+        }
+    };
+
     if (isLoading) {
         return (
-            <div className="h-screen w-screen bg-[#020617] flex flex-col items-center justify-center text-white font-mono">
-                <div className="relative mb-6">
-                    <div className="w-16 h-16 border-4 border-cyan-500/20 rounded-full"></div>
-                    <div className="absolute inset-0 w-16 h-16 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin"></div>
-                </div>
-                <p className="animate-pulse tracking-widest uppercase text-[10px] font-black text-cyan-500">Initializing Protocol...</p>
+            <div className="h-screen w-screen bg-slate-950 flex flex-col items-center justify-center text-white font-mono">
+                <div className="w-12 h-12 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+                <p className="animate-pulse tracking-tighter uppercase text-xs">ELZR Syncing...</p>
             </div>
         );
     }
@@ -277,20 +299,34 @@ function App() {
                     <div className="w-24 h-24 bg-cyan-600/10 rounded-[2.5rem] flex items-center justify-center border-2 border-cyan-600/30 mb-10 shadow-[0_0_50px_rgba(6,182,212,0.15)]">
                         <SmartphoneNfc className="text-cyan-400" size={48} />
                     </div>
-                    <h1 className="text-3xl font-black text-white mb-4 uppercase tracking-tighter font-[Rajdhani]">Proxy Restricted</h1>
-                    <p className="text-slate-400 text-[10px] font-bold leading-relaxed mb-10 uppercase tracking-widest">
-                        ELZR Hunt is an encrypted Telegram Protocol. Establish a direct link via the official bot to synchronize.
+                    <h1 className="text-3xl font-black text-white mb-4 uppercase tracking-tighter font-[Rajdhani]">Access Restricted</h1>
+                    <p className="text-slate-400 text-xs font-medium leading-relaxed mb-10 uppercase tracking-widest">
+                        Eliezer Hunt is a specialized Telegram Mini App protocol. Please launch via the official Telegram bot to synchronize your extraction node.
                     </p>
                     <a
                         href="https://t.me/Obadiah_Bot/eliezer"
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="w-full py-5 bg-cyan-600 text-white font-black text-sm uppercase tracking-[0.2em] rounded-[1.5rem] flex items-center justify-center gap-3 shadow-xl hover:bg-cyan-500 transition-all active:scale-95"
+                        className="w-full py-5 bg-white text-black font-black text-sm uppercase tracking-[0.2em] rounded-[1.5rem] flex items-center justify-center gap-3 shadow-xl hover:bg-slate-200 transition-all active:scale-95"
                     >
                         <Send size={20} />
-                        Establish Link
+                        Open in Telegram
                     </a>
                 </div>
+            </div>
+        );
+    }
+
+    if (isBlocked && !isAdmin) {
+        return (
+            <div className="h-screen w-screen bg-slate-950 flex flex-col items-center justify-center p-8 text-center">
+                <div className="w-24 h-24 bg-red-600/10 rounded-[2.5rem] flex items-center justify-center border-2 border-red-600/30 mb-8 animate-pulse shadow-[0_0_50px_rgba(220,38,38,0.2)]">
+                    <Fingerprint className="text-red-500" size={48} />
+                </div>
+                <h1 className="text-3xl font-black text-white mb-4 uppercase tracking-tighter font-[Rajdhani]">Security Alert</h1>
+                <p className="text-slate-400 text-xs leading-relaxed max-w-xs font-medium uppercase tracking-widest">
+                    This account is locked to a specific device signature. Multi-device access is restricted for security.
+                </p>
             </div>
         );
     }
@@ -301,27 +337,23 @@ function App() {
                 <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(6,182,212,0.1),transparent)] pointer-events-none"></div>
                 <div className="relative z-10 flex flex-col items-center max-w-xs w-full">
                     <div className="mb-12 text-center">
-                        <div className="flex items-center justify-center gap-2 mb-2">
-                             <Activity className="text-cyan-500" size={14} />
-                             <h2 className="text-[10px] text-cyan-500 font-black uppercase tracking-[0.4em]">Secure Terminal</h2>
-                        </div>
-                        <h1 className="text-5xl font-black text-white uppercase tracking-tighter font-[Rajdhani]">ELZR</h1>
+                        <h2 className="text-[10px] text-cyan-500 font-black uppercase tracking-[0.4em] mb-2">Secure Gateway</h2>
+                        <h1 className="text-4xl font-black text-white uppercase tracking-tighter font-[Rajdhani]">ELIEZER</h1>
                     </div>
                     <div className="relative mb-12">
-                        <div className={`w-32 h-32 rounded-[2.5rem] bg-slate-950 border-2 flex items-center justify-center transition-all duration-700 shadow-[0_0_60px_rgba(0,0,0,1)] ${isAuthenticating ? 'border-cyan-500 shadow-cyan-500/10 scale-110' : 'border-slate-800'}`}>
-                            <Fingerprint size={56} className={isAuthenticating ? "text-cyan-400 animate-pulse" : "text-slate-700"} />
+                        <div className={`w-32 h-32 rounded-[2.5rem] bg-slate-900 border-2 flex items-center justify-center transition-all duration-700 shadow-2xl ${isAuthenticating ? 'border-cyan-500 shadow-cyan-500/20' : 'border-slate-800'}`}>
+                            <Fingerprint size={56} className={isAuthenticating ? "text-cyan-400 animate-pulse" : "text-slate-600"} />
                         </div>
                         {isAuthenticating && <div className="absolute top-0 left-0 w-full h-1 bg-cyan-500/50 animate-scan"></div>}
                     </div>
                     <button
                         onClick={handleUnlock}
                         disabled={isAuthenticating}
-                        className="w-full py-5 bg-white text-black font-black text-sm uppercase tracking-[0.2em] rounded-[1.5rem] flex items-center justify-center gap-3 shadow-[0_20px_50px_rgba(0,0,0,0.5)] active:scale-95 transition-all"
+                        className="w-full py-5 bg-white text-black font-black text-sm uppercase tracking-[0.2em] rounded-[1.5rem] flex items-center justify-center gap-3 shadow-xl active:scale-95 transition-all"
                     >
                         {isAuthenticating ? <Loader2 className="animate-spin" size={20} /> : <Lock size={20} />}
-                        Unlock Access
+                        UNLOCK ENTRY
                     </button>
-                    <p className="mt-8 text-[8px] text-slate-600 font-black uppercase tracking-[0.3em]">Encrypted Session v1.0.4</p>
                 </div>
                 <style>{`@keyframes scan { 0% { transform: translateY(0); opacity: 0; } 50% { opacity: 1; } 100% { transform: translateY(128px); opacity: 0; } } .animate-scan { animation: scan 1.5s ease-in-out infinite; }`}</style>
             </div>
@@ -329,7 +361,7 @@ function App() {
     }
 
     return (
-        <div className="h-screen w-screen bg-[#020617] text-white flex flex-col relative overflow-hidden font-[Rajdhani]">
+        <div className="h-screen w-screen bg-slate-950 text-white flex flex-col relative overflow-hidden">
             <div className="flex-1 relative overflow-hidden">
                 {activeTab === Tab.MAP && <MapView location={userState.location || DEFAULT_LOCATION} spawns={spawns} collectedIds={userState.collectedIds} hotspots={allHotspots} />}
                 {activeTab === Tab.HUNT && <HuntView location={userState.location || DEFAULT_LOCATION} spawns={spawns} collectedIds={userState.collectedIds} onCollect={handleCollect} hotspots={allHotspots} />}
@@ -346,24 +378,14 @@ function App() {
                     const camp: Campaign = { id: `camp-${Date.now()}`, ownerWallet: userWalletAddress || 'anon', targetCoords: coords, count, multiplier: mult, durationDays: data.durationDays, totalPrice: price, data: { ...data, status: AdStatus.PENDING_REVIEW }, timestamp: Date.now() };
                     await createCampaignFirebase(camp);
                 }} onPayCampaign={(id) => updateCampaignStatusFirebase(id, AdStatus.ACTIVE)} isTestMode={isTestMode} />}
-                {activeTab === Tab.ADMIN && <AdminView allCampaigns={campaigns} customHotspots={customHotspots} onSaveHotspots={async (newH) => { for (const h of newH) await saveHotspotFirebase(h); }} onDeleteHotspot={async (id) => { await deleteHotspotFirebase(id); }} onDeleteCampaign={async (id) => { await deleteCampaignFirebase(id); }} onApprove={(id) => updateCampaignStatusFirebase(id, AdStatus.ACTIVE)} onReject={(id) => updateCampaignStatusFirebase(id, AdStatus.REJECTED)} onResetMyAccount={() => resetUserInFirebase(userState.telegramId!)} isTestMode={isTestMode} onToggleTestMode={() => setIsTestMode(!isTestMode)} />}
+                {activeTab === Tab.ADMIN && <AdminView allCampaigns={campaigns} customHotspots={customHotspots} onSaveHotspots={async (newH) => { for (const h of newH) await saveHotspotFirebase(h); }} onDeleteHotspot={async (id) => { await deleteHotspotFirebase(id); }} onDeleteCampaign={async (id) => { await deleteCampaignFirebase(id); }} onApprove={(id) => updateCampaignStatusFirebase(id, AdStatus.ACTIVE)} onReject={(id) => updateCampaignStatusFirebase(id, AdStatus.REJECTED)} onResetMyAccount={handleResetAccount} isTestMode={isTestMode} onToggleTestMode={() => setIsTestMode(!isTestMode)} />}
             </div>
-
             {(activeTab === Tab.MAP || activeTab === Tab.HUNT) && (
-                <button 
-                    onClick={() => setShowAIChat(true)} 
-                    className="fixed right-6 bottom-28 z-[999] w-14 h-14 bg-cyan-600 rounded-2xl flex items-center justify-center shadow-[0_10px_30px_rgba(6,182,212,0.4)] border border-cyan-400/50 active:scale-90 transition-transform"
-                >
-                    <Sparkles className="text-white" size={24} />
-                </button>
+                <button onClick={() => setShowAIChat(true)} className="fixed right-6 bottom-24 z-[999] w-12 h-12 bg-cyan-600 rounded-full flex items-center justify-center shadow-[0_0_25px_rgba(6,182,212,0.6)] border border-cyan-400 animate-bounce active:scale-90"><Sparkles className="text-white" size={20} /></button>
             )}
-
             {showAIChat && <AIChat onClose={() => setShowAIChat(false)} />}
-            
-            <div className="fixed bottom-0 left-0 right-0 z-[9999] p-4 pb-6 pointer-events-none">
-                <div className="pointer-events-auto max-w-md mx-auto">
-                    <Navigation currentTab={activeTab} onTabChange={setActiveTab} userWalletAddress={userWalletAddress} />
-                </div>
+            <div className="fixed bottom-0 left-0 right-0 z-[9999] p-4 mb-2 pointer-events-none">
+                <div className="pointer-events-auto"><Navigation currentTab={activeTab} onTabChange={setActiveTab} userWalletAddress={userWalletAddress} /></div>
             </div>
         </div>
     );
