@@ -90,10 +90,16 @@ const sanitizeUserData = (data: any, defaults: UserState): UserState => {
 };
 
 export const subscribeToUserProfile = (tgId: number, defaults: UserState, callback: (userData: UserState) => void) => {
-    return onSnapshot(doc(db, "users", tgId.toString()), (docSnap) => {
+    if (!tgId) return () => {};
+    // DOCUMENT ID este string-ul ID-ului de telegram
+    const docId = tgId.toString();
+    return onSnapshot(doc(db, "users", docId), (docSnap) => {
         if (docSnap.exists()) {
-            callback(sanitizeUserData(docSnap.data(), defaults));
+            const data = sanitizeUserData(docSnap.data(), defaults);
+            callback(data);
         }
+    }, (err) => {
+        console.error("Firestore Subscription Error:", err);
     });
 };
 
@@ -112,8 +118,13 @@ export const syncUserWithFirebase = async (
         const userDoc = await getDoc(userDocRef);
         if (userDoc.exists()) {
             const existingData = userDoc.data();
-            if (existingData.cloudStorageId !== cloudId) {
-                await updateDoc(userDocRef, { cloudStorageId: cloudId, deviceFingerprint: fingerprint });
+            // Update device info only if changed
+            if (existingData.cloudStorageId !== cloudId || existingData.deviceFingerprint !== fingerprint) {
+                await updateDoc(userDocRef, { 
+                    cloudStorageId: cloudId, 
+                    deviceFingerprint: fingerprint,
+                    lastActive: serverTimestamp()
+                });
             }
             return sanitizeUserData({ ...existingData, cloudStorageId: cloudId }, localState);
         } else {
@@ -136,12 +147,16 @@ export const syncUserWithFirebase = async (
                 referralBalance: 0,
                 collectedIds: [],
                 joinedAt: serverTimestamp(),
-                lastActive: serverTimestamp()
+                lastActive: serverTimestamp(),
+                biometricEnabled: true
             };
             await setDoc(userDocRef, newUserProfile);
             return newUserProfile;
         }
-    } catch (e) { return localState; }
+    } catch (e) { 
+        console.error("Sync Error:", e);
+        return localState; 
+    }
 };
 
 export const logAdStartFirebase = async (tgId: number) => {
@@ -163,8 +178,8 @@ export const saveCollectionToFirebase = async (tgId: number, spawnId: string, va
         await addDoc(collection(db, "claims"), {
             userId: Number(tgId),
             spawnId,
-            claimedValue: value,
-            tonReward: tonReward,
+            claimedValue: Number(value),
+            tonReward: Number(tonReward),
             category: category || "URBAN", 
             timestamp: serverTimestamp(),
             location: captureLocation || null,
@@ -174,7 +189,9 @@ export const saveCollectionToFirebase = async (tgId: number, spawnId: string, va
             fingerprint: fingerprint,
             cloudId: cloudId
         });
-    } catch (e) {}
+    } catch (e) {
+        console.error("Claim save error:", e);
+    }
 };
 
 export const requestAdRewardFirebase = async (tgId: number, rewardValue: number) => {
@@ -183,7 +200,7 @@ export const requestAdRewardFirebase = async (tgId: number, rewardValue: number)
     const cloudId = await getCloudStorageId();
     await addDoc(collection(db, "ad_claims"), {
         userId: Number(tgId),
-        rewardValue,
+        rewardValue: Number(rewardValue),
         timestamp: serverTimestamp(),
         initData: window.Telegram.WebApp.initData,
         fingerprint: fingerprint,
@@ -217,7 +234,7 @@ export const getLeaderboard = async () => {
     return snapshot.docs.map((docSnap, index) => ({
         rank: index + 1,
         username: docSnap.data().username || "Hunter",
-        score: docSnap.data().balance || 0
+        score: Number(docSnap.data().balance || 0)
     }));
 };
 
@@ -266,7 +283,7 @@ export const processWithdrawTON = async (tgId: number, amount: number) => {
     const cloudId = await getCloudStorageId();
     await addDoc(collection(db, "withdrawal_requests"), { 
         userId: Number(tgId), 
-        amount, 
+        amount: Number(amount), 
         status: "pending_review", 
         timestamp: serverTimestamp(), 
         initData: window.Telegram.WebApp.initData,
