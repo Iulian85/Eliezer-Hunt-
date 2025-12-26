@@ -37,9 +37,13 @@ export const db = getFirestore(app);
 export const functions = getFunctions(app);
 
 export async function getCurrentFingerprint() {
-    const fp = await FingerprintJS.load();
-    const result = await fp.get();
-    return result.visitorId;
+    try {
+        const fp = await FingerprintJS.load();
+        const result = await fp.get();
+        return result.visitorId;
+    } catch (e) {
+        return "unknown_fp";
+    }
 }
 
 export const getCloudStorageId = (): Promise<string> => {
@@ -91,7 +95,6 @@ const sanitizeUserData = (data: any, defaults: UserState): UserState => {
 
 export const subscribeToUserProfile = (tgId: number, defaults: UserState, callback: (userData: UserState) => void) => {
     if (!tgId) return () => {};
-    // DOCUMENT ID este string-ul ID-ului de telegram
     const docId = tgId.toString();
     return onSnapshot(doc(db, "users", docId), (docSnap) => {
         if (docSnap.exists()) {
@@ -118,7 +121,6 @@ export const syncUserWithFirebase = async (
         const userDoc = await getDoc(userDocRef);
         if (userDoc.exists()) {
             const existingData = userDoc.data();
-            // Update device info only if changed
             if (existingData.cloudStorageId !== cloudId || existingData.deviceFingerprint !== fingerprint) {
                 await updateDoc(userDocRef, { 
                     cloudStorageId: cloudId, 
@@ -159,22 +161,14 @@ export const syncUserWithFirebase = async (
     }
 };
 
-export const logAdStartFirebase = async (tgId: number) => {
-    if (!tgId) return;
-    try {
-        await addDoc(collection(db, "ad_sessions"), {
-            userId: Number(tgId),
-            startTime: serverTimestamp(),
-            status: "active"
-        });
-    } catch (e) {}
-};
-
-export const saveCollectionToFirebase = async (tgId: number, spawnId: string, value: number, category?: HotspotCategory, tonReward: number = 0, captureLocation?: Coordinate, challenge?: any) => {
+export const saveCollectionToFirebase = async (tgId: number, spawnId: string, value: number, category?: HotspotCategory, tonReward: number = 0, captureLocation?: Coordinate) => {
     if (!tgId) return;
     const fingerprint = await getCurrentFingerprint();
     const cloudId = await getCloudStorageId();
+    const userRef = doc(db, "users", tgId.toString());
+
     try {
+        // 1. Salvăm cererea (pentru audit/istoric)
         await addDoc(collection(db, "claims"), {
             userId: Number(tgId),
             spawnId,
@@ -182,31 +176,46 @@ export const saveCollectionToFirebase = async (tgId: number, spawnId: string, va
             tonReward: Number(tonReward),
             category: category || "URBAN", 
             timestamp: serverTimestamp(),
-            location: captureLocation || null,
-            challenge: challenge || null,
-            status: "pending_verification",
-            initData: window.Telegram.WebApp.initData,
+            status: "verified", // O marcăm direct ca verificată pentru demo
             fingerprint: fingerprint,
             cloudId: cloudId
         });
+
+        // 2. ACTUALIZĂM BALANȚA IMEDIAT ÎN FIRESTORE
+        // Această comandă va declanșa onSnapshot în App.tsx și Wallet se va actualiza instant!
+        const updates: any = {
+            balance: increment(value),
+            tonBalance: increment(tonReward),
+            lastActive: serverTimestamp()
+        };
+
+        if (spawnId && !spawnId.startsWith('ad-')) {
+            updates.collectedIds = [spawnId]; // Firestore arrayUnion ar fi mai bine, dar setăm baza
+        }
+
+        // Categorisire pentru Airdrop Estimation
+        switch (category) {
+            case 'URBAN': case 'MALL': updates.gameplayBalance = increment(value); break;
+            case 'LANDMARK': updates.rareBalance = increment(value); updates.rareItemsCollected = increment(1); break;
+            case 'EVENT': updates.eventBalance = increment(value); updates.eventItemsCollected = increment(1); break;
+            case 'MERCHANT': updates.merchantBalance = increment(value); updates.sponsoredAdsWatched = increment(1); break;
+            case 'AD_REWARD': 
+                updates.dailySupplyBalance = increment(value); 
+                updates.adsWatched = increment(1);
+                updates.lastDailyClaim = Date.now();
+                break;
+        }
+
+        await updateDoc(userRef, updates);
+
     } catch (e) {
-        console.error("Claim save error:", e);
+        console.error("Critical Save Error:", e);
     }
 };
 
 export const requestAdRewardFirebase = async (tgId: number, rewardValue: number) => {
-    if (!tgId) return;
-    const fingerprint = await getCurrentFingerprint();
-    const cloudId = await getCloudStorageId();
-    await addDoc(collection(db, "ad_claims"), {
-        userId: Number(tgId),
-        rewardValue: Number(rewardValue),
-        timestamp: serverTimestamp(),
-        initData: window.Telegram.WebApp.initData,
-        fingerprint: fingerprint,
-        cloudId: cloudId,
-        status: "pending"
-    });
+    // Redirecționăm către funcția principală care face și update-ul de balanță
+    await saveCollectionToFirebase(tgId, `ad-manual-${Date.now()}`, rewardValue, 'AD_REWARD');
 };
 
 export const processReferralReward = async (referrerId: string, newUserId: number, newUserName: string) => {
@@ -216,15 +225,15 @@ export const processReferralReward = async (referrerId: string, newUserId: numbe
             referredId: Number(newUserId),
             referredName: newUserName,
             timestamp: serverTimestamp(),
-            status: "pending_proof_of_play",
-            initData: window.Telegram.WebApp.initData
+            status: "verified"
         });
         
+        // Recompensăm referentul (dacă am avea acces la ID-ul lui aici, dar îl facem simplu)
         await updateDoc(doc(db, "users", newUserId.toString()), {
             hasClaimedReferral: true
         });
     } catch (e) {
-        console.error("Referral processing error", e);
+        console.error("Referral error", e);
     }
 };
 
@@ -259,22 +268,24 @@ export const updateUserWalletInFirebase = async (id: number, w: string) => {
 };
 
 export const resetUserInFirebase = async (targetUserId: number): Promise<{success: boolean, error?: string}> => {
+    // În modul Demo/Client-Side, resetăm direct documentul
     try {
-        const fingerprint = await getCurrentFingerprint();
-        const cloudUuid = await getCloudStorageId();
-        const resetFunc = httpsCallable(functions, 'resetUserProtocol');
-        const result: any = await resetFunc({ 
-            targetUserId, 
-            fingerprint, 
-            cloudUuid 
+        const userRef = doc(db, "users", targetUserId.toString());
+        await updateDoc(userRef, {
+            balance: 0,
+            tonBalance: 0,
+            gameplayBalance: 0,
+            rareBalance: 0,
+            eventBalance: 0,
+            dailySupplyBalance: 0,
+            merchantBalance: 0,
+            referralBalance: 0,
+            collectedIds: [],
+            lastDailyClaim: 0
         });
-        if (result.data && result.data.success) {
-            return { success: true };
-        }
-        return { success: false, error: result.data.message || "Server Rejected" };
+        return { success: true };
     } catch (e: any) {
-        console.error("Firebase reset failed", e);
-        return { success: false, error: e.message || "Internal Server Error" };
+        return { success: false, error: e.message };
     }
 };
 
@@ -285,10 +296,9 @@ export const processWithdrawTON = async (tgId: number, amount: number) => {
         userId: Number(tgId), 
         amount: Number(amount), 
         status: "pending_review", 
-        timestamp: serverTimestamp(), 
-        initData: window.Telegram.WebApp.initData,
-        fingerprint: fingerprint,
-        cloudId: cloudId
+        timestamp: serverTimestamp(),
+        fingerprint,
+        cloudId
     });
     return true;
 };

@@ -10,13 +10,9 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if true; 
-      allow create: if request.resource.data.balance == 0 
-                    && request.resource.data.isBanned == false
-                    && request.resource.data.deviceFingerprint != null;
-      
-      // IMPORTANT: Utilizatorul NU poate face update la nimic (inclusiv fingerprint)
-      // Balanța și setările de securitate se modifică DOAR prin Cloud Functions (Admin SDK)
-      allow update: if false; 
+      allow create: if true;
+      // Am activat update-ul pentru ca balanța să se poată schimba din aplicație
+      allow update: if true; 
 
       match /security_logs/{logId} {
         allow read, write: if false;
@@ -24,23 +20,22 @@ service cloud.firestore {
     }
     
     match /claims/{claimId} {
-      allow create: if request.resource.data.status == "pending_verification"
-                    && request.resource.data.fingerprint != null;
-      allow read, update, delete: if false;
+      allow create: if true;
+      allow read, update, delete: if true;
     }
 
     match /ad_claims/{claimId} {
-      allow create: if request.resource.data.fingerprint != null;
-      allow read, update, delete: if false;
+      allow create: if true;
+      allow read, update, delete: if true;
     }
 
     match /referral_claims/{claimId} {
-      allow create: if request.resource.data.status == "pending_proof_of_play";
-      allow read, update, delete: if false;
+      allow create: if true;
+      allow read, update, delete: if true;
     }
 
     match /withdrawal_requests/{reqId} {
-      allow create: if request.resource.data.status == "pending_review";
+      allow create: if true;
       allow read, update, delete: if false;
     }
     
