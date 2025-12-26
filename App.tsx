@@ -225,10 +225,20 @@ function App() {
         }
     };
 
+    // FIX-UL PENTRU SALVAREA WALLET-ULUI – CU AWAIT ȘI DEBUG
     useEffect(() => {
         if (userWalletAddress && userState.telegramId) {
-            updateUserWalletInFirebase(userState.telegramId, userWalletAddress);
-            setUserState(prev => ({ ...prev, walletAddress: userWalletAddress }));
+            const saveWallet = async () => {
+                try {
+                    await updateUserWalletInFirebase(userState.telegramId, userWalletAddress);
+                    console.log("Wallet salvat în Firebase cu succes:", userWalletAddress);
+                    setUserState(prev => ({ ...prev, walletAddress: userWalletAddress }));
+                } catch (error) {
+                    console.error("Eroare la salvarea wallet-ului în Firebase:", error);
+                }
+            };
+
+            saveWallet();
         }
     }, [userWalletAddress, userState.telegramId]);
 
