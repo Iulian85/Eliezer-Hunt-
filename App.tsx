@@ -138,12 +138,13 @@ function App() {
 
                 const cloudId = await getCloudStorageId();
                 const synced = await syncUserWithFirebase(userData, defaultUserState, fingerprint, cloudId, window.Telegram.WebApp.initData);
-                setUserState(prev => ({ ...prev, ...synced }));
+                setUserState(synced);
 
                 if (synced.isBanned) setIsBlocked(true);
 
-                subscribeToUserProfile(parseInt(userId), (updatedData) => {
-                    setUserState(prev => ({ ...prev, ...updatedData }));
+                // FIX: Trimitem defaultUserState pentru a asigura merge-ul corect la refresh
+                subscribeToUserProfile(parseInt(userId), defaultUserState, (updatedData) => {
+                    setUserState(updatedData);
                     if (updatedData.isBanned) setIsBlocked(true);
                 });
             } catch (err) {
@@ -196,7 +197,6 @@ function App() {
         if (isBlocked && !isAdmin) return;
         if (userState.collectedIds.includes(spawnId)) return;
         
-        // ACTUALIZARE OPTIMISTĂ COMPLETĂ (UI instantaneu pentru toate balanțele)
         setUserState(prev => {
             const newState = {
                 ...prev,
@@ -205,7 +205,6 @@ function App() {
                 collectedIds: [...prev.collectedIds, spawnId]
             };
 
-            // Mapăm valoarea pe sub-balanța corectă pentru a vedea creșterea în Wallet imediat
             if (category === 'LANDMARK') {
                 newState.rareBalance = (newState.rareBalance || 0) + value;
                 newState.rareItemsCollected = (newState.rareItemsCollected || 0) + 1;
@@ -218,7 +217,6 @@ function App() {
             } else if (category === 'AD_REWARD') {
                 newState.dailySupplyBalance = (newState.dailySupplyBalance || 0) + value;
             } else {
-                // URBAN, MALL și GIFTBOX (puncte) merg în Gameplay
                 newState.gameplayBalance = (newState.gameplayBalance || 0) + value;
             }
 

@@ -73,10 +73,27 @@ export const askGeminiProxy = async (messages: any[]) => {
     return result.data as { text: string };
 };
 
-export const subscribeToUserProfile = (tgId: number, callback: (userData: Partial<UserState>) => void) => {
+// FUNCȚIE DE AJUTOR: Asigură că obiectul are toate balanțele, chiar dacă lipsesc din DB
+const sanitizeUserData = (data: any, defaults: UserState): UserState => {
+    return {
+        ...defaults,
+        ...data,
+        balance: Number(data.balance || 0),
+        tonBalance: Number(data.tonBalance || 0),
+        gameplayBalance: Number(data.gameplayBalance || 0),
+        rareBalance: Number(data.rareBalance || 0),
+        eventBalance: Number(data.eventBalance || 0),
+        dailySupplyBalance: Number(data.dailySupplyBalance || 0),
+        merchantBalance: Number(data.merchantBalance || 0),
+        referralBalance: Number(data.referralBalance || 0),
+        collectedIds: data.collectedIds || []
+    };
+};
+
+export const subscribeToUserProfile = (tgId: number, defaults: UserState, callback: (userData: UserState) => void) => {
     return onSnapshot(doc(db, "users", tgId.toString()), (docSnap) => {
         if (docSnap.exists()) {
-            callback(docSnap.data() as UserState);
+            callback(sanitizeUserData(docSnap.data(), defaults));
         }
     });
 };
@@ -95,7 +112,7 @@ export const syncUserWithFirebase = async (
     try {
         const userDoc = await getDoc(userDocRef);
         if (userDoc.exists()) {
-            return { ...localState, ...userDoc.data() as any, telegramId: userData.id };
+            return sanitizeUserData(userDoc.data(), localState);
         } else {
             const newUserProfile: any = {
                 telegramId: userData.id,
@@ -144,7 +161,7 @@ export const saveCollectionToFirebase = async (tgId: number, spawnId: string, va
             userId: tgId,
             spawnId,
             claimedValue: value,
-            tonReward: tonReward, // TRIMITEM TON REWARD PENTRU VALIDARE SERVER
+            tonReward: tonReward,
             category: category || "URBAN", 
             timestamp: serverTimestamp(),
             location: captureLocation || null,

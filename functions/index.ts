@@ -20,7 +20,9 @@ async function validateAndCheckReplay(initData: string): Promise<boolean> {
         const hash = urlParams.get('hash');
         const authDate = parseInt(urlParams.get('auth_date') || '0');
         const now = Math.floor(Date.now() / 1000);
-        if (now - authDate > 900) return false;
+        
+        // REVERT LA SECURITATE STRICTĂ: 5 minute maxim
+        if (now - authDate > 300) return false; 
 
         urlParams.delete('hash');
         const sortedParams = Array.from(urlParams.entries()).sort().map(([k, v]) => `${k}=${v}`).join('\n');
@@ -61,7 +63,7 @@ export const chatWithELZR = onCall(async (request) => {
     if (!userId) throw new HttpsError('internal', 'Invalid Identity');
 
     if (!(await verifyDeviceBinding(userId, data.fingerprint, data.cloudId))) {
-        throw new HttpsError('permission-denied', 'SECURITY ALERT: Device Identity Mismatch.');
+        throw new HttpsError('permission-denied', 'SECURITY ALERT: Identity Mismatch.');
     }
 
     const userRef = db.collection('users').doc(userId);
@@ -71,7 +73,7 @@ export const chatWithELZR = onCall(async (request) => {
     const isNewHour = (Date.now() - lastChatReset) > 3600000;
 
     if (!isNewHour && currentChatCount >= 20) {
-        throw new HttpsError('resource-exhausted', 'Protocol overload. Try again in 1 hour.');
+        throw new HttpsError('resource-exhausted', 'Protocol overload.');
     }
 
     await userRef.update({
@@ -79,12 +81,6 @@ export const chatWithELZR = onCall(async (request) => {
         lastChatReset: isNewHour ? Date.now() : lastChatReset,
         lastActive: FieldValue.serverTimestamp()
     });
-
-    const anyRequest = rawRequest as any;
-    const ip = anyRequest.headers?.['x-forwarded-for'] || anyRequest.socket?.remoteAddress;
-    const country = anyRequest.headers?.['x-appengine-country'] || "Unknown";
-
-    await userRef.update({ lastIp: ip, lastIpCountry: country });
 
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
     const response = await ai.models.generateContent({
@@ -101,17 +97,14 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
     if (!snap) return;
     const claim = snap.data();
     
-    // 1. Validare Replay & Auth
     if (!(await validateAndCheckReplay(claim.initData))) {
         await snap.ref.update({ status: 'rejected', reason: 'Auth Failure' });
         return;
     }
 
     const userId = claim.userId.toString();
-    // 2. Hardware Lock Check
     if (!(await verifyDeviceBinding(userId, claim.fingerprint, claim.cloudId))) {
         await snap.ref.update({ status: 'rejected', reason: 'Identity Fraud' });
-        await db.collection('users').doc(userId).update({ isBanned: true });
         return;
     }
 
@@ -119,7 +112,6 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
     const userDoc = await userRef.get();
     if (!userDoc.exists || userDoc.data()?.isBanned) return;
 
-    // 3. Procesare Recompensă
     const hotspotId = claim.spawnId.split('-')[0];
     const hotspotSnap = await db.collection('hotspots').doc(hotspotId).get();
     
@@ -130,17 +122,13 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
     if (hotspotSnap.exists) {
         const hData = hotspotSnap.data()!;
         category = hData.category;
-        
-        // Dacă e GIFTBOX, acceptăm valoarea trimisă de client (pentru sincronizare UI) 
-        // dar limităm la max 1000 puncte pentru securitate.
         if (category === 'GIFTBOX') {
             elzrReward = Math.min(elzrReward, 1000);
-            // Dacă clientul a raportat un câștig TON (tonReward > 0), validăm pe server
             if (claim.tonReward > 0) {
                 const validPrizes = hData.prizes || [0.05, 0.5];
                 if (validPrizes.includes(claim.tonReward)) {
                     tonReward = claim.tonReward;
-                    elzrReward = 0; // Nu dăm și puncte și TON în același timp
+                    elzrReward = 0;
                 }
             }
         } else {
@@ -148,7 +136,6 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
         }
     }
 
-    // 4. Actualizare Atomică în Baza de Date
     await db.runTransaction(async (tx) => {
         const freshUser = await tx.get(userRef);
         const collected = freshUser.data()?.collectedIds || [];
@@ -164,7 +151,6 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
             lastActive: FieldValue.serverTimestamp()
         };
 
-        // MAPARE PE SUB-BALANȚE PENTRU INTERFAȚĂ
         if (category === 'LANDMARK') {
             updatePayload.rareBalance = FieldValue.increment(elzrReward);
             updatePayload.rareItemsCollected = FieldValue.increment(1);
@@ -177,18 +163,11 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
         } else if (category === 'AD_REWARD') {
             updatePayload.dailySupplyBalance = FieldValue.increment(elzrReward);
         } else {
-            // GIFTBOX, URBAN, MALL merg toate în Gameplay Balance
             updatePayload.gameplayBalance = FieldValue.increment(elzrReward);
         }
 
         tx.update(userRef, updatePayload);
-        tx.update(snap.ref, { 
-            status: 'verified', 
-            finalElzr: elzrReward, 
-            finalTon: tonReward, 
-            processedCategory: category,
-            verifiedAt: FieldValue.serverTimestamp() 
-        });
+        tx.update(snap.ref, { status: 'verified', finalElzr: elzrReward, finalTon: tonReward, verifiedAt: FieldValue.serverTimestamp() });
     });
 });
 
@@ -207,42 +186,13 @@ export const onAdClaimCreated = onDocumentCreated('ad_claims/{claimId}', async (
     const userDoc = await userRef.get();
     if (!userDoc.exists || userDoc.data()?.isBanned) return;
 
-    if (!(await verifyDeviceBinding(userId, claim.fingerprint, claim.cloudId))) {
-        await snap.ref.update({ status: 'rejected', reason: 'Identity Mismatch' });
-        return;
-    }
-
-    const sessionQuery = await db.collection('ad_sessions')
-        .where('userId', '==', parseInt(userId))
-        .where('status', '==', 'active')
-        .orderBy('startTime', 'desc')
-        .limit(1)
-        .get();
-
-    if (sessionQuery.empty) {
-        await snap.ref.update({ status: 'rejected', reason: 'No session' });
-        return;
-    }
-
-    const sessionDoc = sessionQuery.docs[0];
-    const startTime = sessionDoc.data().startTime as Timestamp;
-    const elapsedSeconds = (Timestamp.now().toMillis() - startTime.toMillis()) / 1000;
-
-    if (elapsedSeconds < 14 || elapsedSeconds > 300) {
-        await snap.ref.update({ status: 'rejected', reason: 'Timing' });
-        return;
-    }
-
     const reward = claim.rewardValue || 500;
     await userRef.update({
         balance: FieldValue.increment(reward),
         dailySupplyBalance: FieldValue.increment(reward),
-        dailyAdsCount: FieldValue.increment(1),
-        lastAdsReset: Date.now(),
-        lastActive: FieldValue.serverTimestamp(),
-        lastDailyClaim: Date.now()
+        lastDailyClaim: Date.now(),
+        lastActive: FieldValue.serverTimestamp()
     });
-
-    await sessionDoc.ref.update({ status: 'completed', completedAt: FieldValue.serverTimestamp() });
+    
     await snap.ref.update({ status: 'processed' });
 });
