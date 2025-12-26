@@ -227,14 +227,17 @@ export const updateCampaignStatusFirebase = async (id: string, s: string) => upd
 export const deleteCampaignFirebase = async (id: string) => deleteDoc(doc(db, "campaigns", id));
 export const updateUserWalletInFirebase = async (id: number, w: string) => updateDoc(doc(db, "users", id.toString()), { walletAddress: w });
 
-export const resetUserInFirebase = async (targetUserId: number) => {
+export const resetUserInFirebase = async (targetUserId: number): Promise<{success: boolean, error?: string}> => {
     try {
         const resetFunc = httpsCallable(functions, 'resetUserProtocol');
-        await resetFunc({ targetUserId });
-        return true;
-    } catch (e) {
+        const result: any = await resetFunc({ targetUserId });
+        if (result.data && result.data.success) {
+            return { success: true };
+        }
+        return { success: false, error: "Server Wipe Failed" };
+    } catch (e: any) {
         console.error("Reset trigger failed", e);
-        return false;
+        return { success: false, error: e.message };
     }
 };
 

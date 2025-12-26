@@ -241,16 +241,15 @@ function App() {
     const handleResetMyAccountApp = async () => {
         if (userState.telegramId) {
             try {
-                const success = await resetUserInFirebase(userState.telegramId);
-                if (success) {
-                    alert("Account Reset Successful on Server.");
+                const result = await resetUserInFirebase(userState.telegramId);
+                if (result.success) {
+                    alert("Account Purged. System reloading...");
                     window.location.reload();
                 } else {
-                    alert("Server-side reset rejected. Check if you are authorized.");
+                    alert("Reset Denied: " + (result.error || "Server rejected protocol"));
                 }
             } catch (e: any) {
-                alert("Error during reset: " + e.message);
-                throw e;
+                alert("Protocol Error: " + e.message);
             }
         }
     };
@@ -274,7 +273,8 @@ function App() {
         <div className="h-screen w-screen bg-slate-950 text-white flex flex-col relative overflow-hidden">
             <div className="flex-1 relative overflow-hidden">
                 {activeTab === Tab.MAP && <MapView location={userState.location || DEFAULT_LOCATION} spawns={spawns} collectedIds={userState.collectedIds} hotspots={allHotspots} />}
-                {activeTab === Tab.HUNT && <HuntView userId={userState.telegramId} location={userState.location || DEFAULT_LOCATION} spawns={spawns} collectedIds={userState.collectedIds} onCollect={handleCollect} hotspots={allHotspots} />}
+                {/* Fix: Removed the unused userId prop which caused a TypeScript error */}
+                {activeTab === Tab.HUNT && <HuntView location={userState.location || DEFAULT_LOCATION} spawns={spawns} collectedIds={userState.collectedIds} onCollect={handleCollect} hotspots={allHotspots} />}
                 {activeTab === Tab.LEADERBOARD && <LeaderboardView />}
                 {activeTab === Tab.WALLET && <WalletView userState={userState} onAdReward={(amt) => handleCollect('ad-' + Date.now(), amt, 'AD_REWARD')} onInvite={handleInvite} />}
                 {activeTab === Tab.FRENS && <FrensView referralCount={userState.referrals} referralNames={userState.referralNames} onInvite={handleInvite} />}

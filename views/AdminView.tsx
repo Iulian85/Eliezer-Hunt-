@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Campaign, AdStatus, HotspotDefinition, HotspotCategory, Coordinate } from '../types';
 import { ShieldCheck, Check, X, Play, Clock, AlertTriangle, Users, Ban, Wallet, Globe, Search, Lock, Unlock, LayoutDashboard, Megaphone, BarChart3, Settings, Trash2, UserX, FlaskConical, MapPin, Plus, Edit2, Coins, Map as MapIcon, Upload, Image as ImageIcon, Loader2, Gift, Calendar, Activity, History, RotateCcw, AlertCircle, Fingerprint, RefreshCw } from 'lucide-react';
@@ -64,9 +65,10 @@ export const AdminView: React.FC<AdminViewProps> = ({
         setIsLoadingUsers(false);
     };
 
-    const formatDate = (ts?: number) => {
+    const formatDate = (ts?: any) => {
         if (!ts) return 'N/A';
-        return new Intl.DateTimeFormat('en-US', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(ts);
+        const d = ts.toMillis ? new Date(ts.toMillis()) : new Date(ts);
+        return new Intl.DateTimeFormat('en-US', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(d);
     };
 
     const handleDeleteUser = async (id: string) => {
@@ -78,9 +80,13 @@ export const AdminView: React.FC<AdminViewProps> = ({
 
     const handleResetUserAccount = async (id: string) => {
         if (window.confirm(`ACCOUNT RESET: Clear all extraction progress for user ${id}?`)) {
-            await resetUserInFirebase(parseInt(id));
-            alert("Account progress has been reset.");
-            loadUsers();
+            const res = await resetUserInFirebase(parseInt(id));
+            if (res.success) {
+                alert("Account progress has been reset.");
+                loadUsers();
+            } else {
+                alert(`Reset Error: ${res.error}`);
+            }
         }
     };
 
@@ -230,7 +236,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                                 </div>
                             </div>
                             <div className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-widest border
-                                ${campaign.data.status === AdStatus.PENDING_REVIEW ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' :
+                                ${campaign.data.status === AdStatus.PENDING_REVIEW ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' :
                                   campaign.data.status === AdStatus.ACTIVE ? 'bg-green-500/10 text-green-400 border-green-500/20' :
                                   'bg-red-500/10 text-red-400 border-red-500/20'}
                             `}>

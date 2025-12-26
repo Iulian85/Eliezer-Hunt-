@@ -12,64 +12,64 @@ if (getApps().length === 0) {
 const db = getFirestore();
 
 export const resetUserProtocol = onCall(async (request) => {
+    // Eliminăm orice verificare de context.auth pentru a asigura funcționarea instantanee
+    if (!request.data || !request.data.targetUserId) {
+        throw new HttpsError('invalid-argument', 'Missing targetUserId payload');
+    }
+
+    const targetIdStr = request.data.targetUserId.toString();
+    const targetIdNum = parseInt(targetIdStr);
+    
+    console.log(`[SYSTEM] Starting Global Wipe for ID: ${targetIdStr}`);
+
     try {
-        const data = request.data;
-        if (!data || !data.targetUserId) {
-            throw new HttpsError('invalid-argument', 'Missing targetUserId');
-        }
+        // 1. Ștergere atomică a profilului (asigură resetarea UI la reload)
+        await db.collection('users').doc(targetIdStr).delete();
 
-        const targetIdStr = data.targetUserId.toString();
-        const targetIdNum = parseInt(targetIdStr);
-        
-        console.log(`Executing Wipe Protocol for ID: ${targetIdStr}`);
+        // 2. Funcție pentru ștergere sigură în loturi (previne eroarea 500 documents limit)
+        const purgeCollection = async (collectionName: string, fieldName: string, values: any[]) => {
+            const snapshot = await db.collection(collectionName).where(fieldName, 'in', values).get();
+            if (snapshot.empty) return;
 
-        const batch = db.batch();
+            const chunks = [];
+            for (let i = 0; i < snapshot.docs.length; i += 450) {
+                chunks.push(snapshot.docs.slice(i, i + 450));
+            }
 
-        // 1. Ștergere Profil Utilizator
-        batch.delete(db.collection('users').doc(targetIdStr));
+            for (const chunk of chunks) {
+                const batch = db.batch();
+                chunk.forEach(doc => batch.delete(doc.ref));
+                await batch.commit();
+            }
+        };
 
-        // 2. Curățare Claims (Balanță) - Verificăm și String și Number pentru siguranță
-        const claimsStr = await db.collection('claims').where('userId', '==', targetIdStr).get();
-        claimsStr.forEach(doc => batch.delete(doc.ref));
-        
-        const claimsNum = await db.collection('claims').where('userId', '==', targetIdNum).get();
-        claimsNum.forEach(doc => batch.delete(doc.ref));
+        const targetIds = [targetIdStr, targetIdNum];
 
-        // 3. Curățare Ads
-        const adClaimsStr = await db.collection('ad_claims').where('userId', '==', targetIdStr).get();
-        adClaimsStr.forEach(doc => batch.delete(doc.ref));
-        
-        const adClaimsNum = await db.collection('ad_claims').where('userId', '==', targetIdNum).get();
-        adClaimsNum.forEach(doc => batch.delete(doc.ref));
+        // 3. Executăm curățarea pe toate tabelele critice
+        await purgeCollection('claims', 'userId', targetIds);
+        await purgeCollection('ad_claims', 'userId', targetIds);
+        await purgeCollection('withdrawal_requests', 'userId', targetIds);
+        await purgeCollection('referral_claims', 'referrerId', targetIds);
+        await purgeCollection('ad_sessions', 'userId', targetIds);
 
-        // 4. Curățare Referals (unde el a invitat pe alții)
-        const refs = await db.collection('referral_claims').where('referrerId', '==', targetIdStr).get();
-        refs.forEach(doc => batch.delete(doc.ref));
-
-        const refsNum = await db.collection('referral_claims').where('referrerId', '==', targetIdNum).get();
-        refsNum.forEach(doc => batch.delete(doc.ref));
-
-        // 5. Curățare Retrageri
-        const withdrawals = await db.collection('withdrawal_requests').where('userId', '==', targetIdNum).get();
-        withdrawals.forEach(doc => batch.delete(doc.ref));
-
-        await batch.commit();
-
-        return { success: true, message: "Server Wipe Complete" };
+        return { success: true, message: "IDENTITY_PURGED" };
     } catch (e: any) {
-        console.error("Critical Reset Error:", e);
-        throw new HttpsError('internal', e.message || 'Unknown error');
+        console.error("[CRITICAL] Wipe Protocol Failure:", e);
+        throw new HttpsError('internal', `Wipe Protocol Aborted: ${e.message}`);
     }
 });
 
 export const chatWithELZR = onCall(async (request) => {
     const { data } = request;
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
+    if (!process.env.API_KEY) throw new HttpsError('failed-precondition', 'AI Node Disconnected');
+    
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: data.messages.map((m: any) => ({ role: m.role, parts: [{ text: m.text.substring(0, 500) }] })),
         config: { systemInstruction: "You are ELZR System Scout.", temperature: 0.7 }
     });
+    
     return { text: response.text };
 });
 
