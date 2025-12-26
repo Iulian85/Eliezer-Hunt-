@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useMemo } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { Coordinate, SpawnPoint, HotspotDefinition } from '../types';
@@ -14,8 +13,7 @@ interface HuntViewProps {
     location: Coordinate;
     spawns: SpawnPoint[];
     collectedIds: string[];
-    // Fix: Updated onCollect signature to allow passing tonReward to the collector function
-    onCollect: (id: string, value: number, category?: any, tonReward?: number) => void;
+    onCollect: (id: string, value: number, category?: any) => void;
     hotspots: HotspotDefinition[];
 }
 
@@ -65,8 +63,7 @@ export const HuntView: React.FC<HuntViewProps> = ({ location, spawns, collectedI
 
     const handleARCollect = (points: number, tonReward: number = 0) => {
         if (nearestSpawn) {
-            // Fix: Pass tonReward to the central collection handler
-            onCollect(nearestSpawn.spawn.id, points, nearestSpawn.spawn.category, tonReward);
+            onCollect(nearestSpawn.spawn.id, points, nearestSpawn.spawn.category);
             // We DO NOT call setArMode(false) here so the user stays in AR.
             // The useEffect above will automatically pick the next nearest spawn
             // once the current one is added to collectedIds.
