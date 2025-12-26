@@ -14,27 +14,18 @@ const db = getFirestore();
 const ADMIN_TELEGRAM_ID = 7319782429;
 
 /**
- * PROTOCOL NUCLEAR RESET - ADMIN ONLY (7319782429)
- * Resetează balanțele la zero fără a șterge profilul.
+ * PROTOCOL NUCLEAR RESET - ADMIN ONLY
  */
 export const resetUserProtocol = onCall(async (request) => {
     const { targetUserId, fingerprint, cloudUuid } = request.data || {};
-
-    if (!targetUserId) {
-        throw new HttpsError('invalid-argument', 'Missing targetUserId');
-    }
+    if (!targetUserId) throw new HttpsError('invalid-argument', 'Missing targetUserId');
 
     const idStr = targetUserId.toString();
-    const idNum = parseInt(idStr);
-
-    // Securitate Hardcoded pentru Admin ID
-    if (idNum !== ADMIN_TELEGRAM_ID) {
-        throw new HttpsError('permission-denied', 'Protocol Restricted to System Administrator');
+    if (parseInt(idStr) !== ADMIN_TELEGRAM_ID) {
+        throw new HttpsError('permission-denied', 'Restricted to System Administrator');
     }
 
     try {
-        console.log(`[SYSTEM] Initiating Reset for Admin: ${idStr}`);
-
         const resetPayload = {
             balance: 0,
             tonBalance: 0,
@@ -54,18 +45,15 @@ export const resetUserProtocol = onCall(async (request) => {
             rareItemsCollected: 0,
             eventItemsCollected: 0,
             referrals: 0,
-            // Înregistrăm noile date de identitate furnizate la reset
             deviceFingerprint: fingerprint || FieldValue.delete(), 
             cloudStorageId: cloudUuid || FieldValue.delete(),
             lastActive: FieldValue.serverTimestamp()
         };
 
-        // Folosim SET MERGE pentru a evita eroarea "NOT_FOUND" sau "INTERNAL"
         await db.collection('users').doc(idStr).set(resetPayload, { merge: true });
 
-        // Ștergere istoric Claims (Batch)
         const purgeHistory = async (col: string, field: string) => {
-            const snap = await db.collection(col).where(field, 'in', [idStr, idNum]).get();
+            const snap = await db.collection(col).where(field, 'in', [idStr, parseInt(idStr)]).get();
             if (snap.empty) return;
             const batch = db.batch();
             snap.docs.forEach(doc => batch.delete(doc.ref));
@@ -77,62 +65,98 @@ export const resetUserProtocol = onCall(async (request) => {
         await purgeHistory('referral_claims', 'referrerId');
 
         return { success: true, message: "ADMIN_IDENTITY_PURGED" };
-
     } catch (e: any) {
-        console.error("FATAL RESET ERROR:", e);
         throw new HttpsError('internal', e.message);
     }
 });
 
 /**
- * TRIGGER: Procesare monede colectate (MAP/HUNT)
+ * TRIGGER: Procesare monede colectate (MAP/HUNT/GIFTBOX/ADS)
+ * REZOLVARE: Actualizează balanța indiferent de categorie.
  */
 export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event) => {
     const snap = event.data;
     if (!snap) return;
     const claim = snap.data();
-    const userRef = db.collection('users').doc(claim.userId.toString());
+    
+    // Convertim ID-ul în string pentru a asigura potrivirea cu Document ID
+    const userIdStr = claim.userId.toString();
+    const userRef = db.collection('users').doc(userIdStr);
     
     const userDoc = await userRef.get();
-    if (!userDoc.exists) return;
+    if (!userDoc.exists) {
+        console.error(`User document ${userIdStr} not found for claim`);
+        return;
+    }
+
+    const value = Number(claim.claimedValue || 0);
+    const tonValue = Number(claim.tonReward || 0);
 
     const updates: any = {
-        balance: FieldValue.increment(claim.claimedValue || 0),
-        tonBalance: FieldValue.increment(claim.tonReward || 0),
-        collectedIds: FieldValue.arrayUnion(claim.spawnId),
+        balance: FieldValue.increment(value),
+        tonBalance: FieldValue.increment(tonValue),
         lastActive: FieldValue.serverTimestamp()
     };
 
-    switch (claim.category) {
-        case 'URBAN': case 'MALL': updates.gameplayBalance = FieldValue.increment(claim.claimedValue || 0); break;
-        case 'LANDMARK': updates.rareBalance = FieldValue.increment(claim.claimedValue || 0); break;
-        case 'EVENT': updates.eventBalance = FieldValue.increment(claim.claimedValue || 0); break;
-        case 'MERCHANT': updates.merchantBalance = FieldValue.increment(claim.claimedValue || 0); break;
+    // Dacă nu e reclamă repetabilă, o adăugăm la ID-urile colectate
+    if (!claim.spawnId.startsWith('ad-')) {
+        updates.collectedIds = FieldValue.arrayUnion(claim.spawnId);
     }
 
-    await userRef.update(updates);
+    // Actualizăm sub-balanțele specifice
+    switch (claim.category) {
+        case 'URBAN': 
+        case 'MALL': 
+            updates.gameplayBalance = FieldValue.increment(value); 
+            break;
+        case 'LANDMARK': 
+            updates.rareBalance = FieldValue.increment(value); 
+            updates.rareItemsCollected = FieldValue.increment(1);
+            break;
+        case 'EVENT': 
+            updates.eventBalance = FieldValue.increment(value); 
+            updates.eventItemsCollected = FieldValue.increment(1);
+            break;
+        case 'MERCHANT': 
+            updates.merchantBalance = FieldValue.increment(value); 
+            updates.sponsoredAdsWatched = FieldValue.increment(1);
+            break;
+        case 'GIFTBOX':
+            // Giftbox-urile pot da și TON și Puncte
+            updates.gameplayBalance = FieldValue.increment(value);
+            break;
+        case 'AD_REWARD':
+            updates.dailySupplyBalance = FieldValue.increment(value);
+            updates.adsWatched = FieldValue.increment(1);
+            break;
+    }
+
+    await userRef.set(updates, { merge: true });
     await snap.ref.update({ status: 'verified' });
 });
 
 /**
- * TRIGGER: Procesare recompense RECLAME (Daily / Adsgram)
- * Rezolvă problema punctelor care nu apăreau după vizualizarea reclamelor.
+ * TRIGGER: Procesare recompense RECLAME (Adsgram/Daily)
  */
 export const onAdClaimCreated = onDocumentCreated('ad_claims/{claimId}', async (event) => {
     const snap = event.data;
     if (!snap) return;
     const claim = snap.data();
-    const userRef = db.collection('users').doc(claim.userId.toString());
+    const userIdStr = claim.userId.toString();
+    const userRef = db.collection('users').doc(userIdStr);
     
     const userDoc = await userRef.get();
     if (!userDoc.exists) return;
 
-    await userRef.update({
-        balance: FieldValue.increment(claim.rewardValue || 0),
-        dailySupplyBalance: FieldValue.increment(claim.rewardValue || 0),
+    const value = Number(claim.rewardValue || 0);
+
+    await userRef.set({
+        balance: FieldValue.increment(value),
+        dailySupplyBalance: FieldValue.increment(value),
+        adsWatched: FieldValue.increment(1),
         lastDailyClaim: Date.now(),
         lastActive: FieldValue.serverTimestamp()
-    });
+    }, { merge: true });
     
     await snap.ref.update({ status: 'processed' });
 });
@@ -140,13 +164,11 @@ export const onAdClaimCreated = onDocumentCreated('ad_claims/{claimId}', async (
 export const chatWithELZR = onCall(async (request) => {
     const { data } = request;
     if (!process.env.API_KEY) throw new HttpsError('failed-precondition', 'AI Node Disconnected');
-    
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: data.messages.map((m: any) => ({ role: m.role, parts: [{ text: m.text.substring(0, 500) }] })),
         config: { systemInstruction: "You are ELZR System Scout.", temperature: 0.7 }
     });
-    
     return { text: response.text };
 });

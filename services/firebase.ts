@@ -111,7 +111,6 @@ export const syncUserWithFirebase = async (
     try {
         const userDoc = await getDoc(userDocRef);
         if (userDoc.exists()) {
-            // Asigurăm sincronizarea UUID-ului dacă acesta lipsește sau s-a schimbat
             const existingData = userDoc.data();
             if (existingData.cloudStorageId !== cloudId) {
                 await updateDoc(userDocRef, { cloudStorageId: cloudId, deviceFingerprint: fingerprint });
@@ -149,7 +148,7 @@ export const logAdStartFirebase = async (tgId: number) => {
     if (!tgId) return;
     try {
         await addDoc(collection(db, "ad_sessions"), {
-            userId: tgId,
+            userId: Number(tgId),
             startTime: serverTimestamp(),
             status: "active"
         });
@@ -162,7 +161,7 @@ export const saveCollectionToFirebase = async (tgId: number, spawnId: string, va
     const cloudId = await getCloudStorageId();
     try {
         await addDoc(collection(db, "claims"), {
-            userId: tgId,
+            userId: Number(tgId),
             spawnId,
             claimedValue: value,
             tonReward: tonReward,
@@ -183,7 +182,7 @@ export const requestAdRewardFirebase = async (tgId: number, rewardValue: number)
     const fingerprint = await getCurrentFingerprint();
     const cloudId = await getCloudStorageId();
     await addDoc(collection(db, "ad_claims"), {
-        userId: tgId,
+        userId: Number(tgId),
         rewardValue,
         timestamp: serverTimestamp(),
         initData: window.Telegram.WebApp.initData,
@@ -197,7 +196,7 @@ export const processReferralReward = async (referrerId: string, newUserId: numbe
     try {
         await addDoc(collection(db, "referral_claims"), {
             referrerId,
-            referredId: newUserId,
+            referredId: Number(newUserId),
             referredName: newUserName,
             timestamp: serverTimestamp(),
             status: "pending_proof_of_play",
@@ -266,7 +265,7 @@ export const processWithdrawTON = async (tgId: number, amount: number) => {
     const fingerprint = await getCurrentFingerprint();
     const cloudId = await getCloudStorageId();
     await addDoc(collection(db, "withdrawal_requests"), { 
-        userId: tgId, 
+        userId: Number(tgId), 
         amount, 
         status: "pending_review", 
         timestamp: serverTimestamp(), 
