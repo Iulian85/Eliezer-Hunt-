@@ -81,7 +81,6 @@ function App() {
         return userWalletAddress && userWalletAddress === ADMIN_WALLET_ADDRESS;
     }, [userWalletAddress]);
 
-    // FILTRAM HOTSPOT-URILE CARE AU FOST DEJA COLECTATE
     const allHotspots = useMemo(() => {
         const activeAdsAsHotspots: HotspotDefinition[] = campaigns
             .filter(c => c.data.status === AdStatus.ACTIVE)
@@ -99,7 +98,6 @@ function App() {
             }));
 
         const merged = [...GLOBAL_HOTSPOTS, ...customHotspots, ...activeAdsAsHotspots];
-        // Eliminăm hotspot-urile fixe (Landmark, GiftBox, Event) dacă sunt deja colectate de utilizator
         return merged.filter(h => !userState.collectedIds.includes(h.id));
     }, [campaigns, customHotspots, userState.collectedIds]);
 
@@ -198,13 +196,34 @@ function App() {
         if (isBlocked && !isAdmin) return;
         if (userState.collectedIds.includes(spawnId)) return;
         
-        // ACTUALIZARE OPTIMISTĂ (UI instantaneu)
-        setUserState(prev => ({
-            ...prev,
-            balance: prev.balance + value,
-            tonBalance: prev.tonBalance + tonReward,
-            collectedIds: [...prev.collectedIds, spawnId]
-        }));
+        // ACTUALIZARE OPTIMISTĂ COMPLETĂ (UI instantaneu pentru toate balanțele)
+        setUserState(prev => {
+            const newState = {
+                ...prev,
+                balance: prev.balance + value,
+                tonBalance: prev.tonBalance + tonReward,
+                collectedIds: [...prev.collectedIds, spawnId]
+            };
+
+            // Mapăm valoarea pe sub-balanța corectă pentru a vedea creșterea în Wallet imediat
+            if (category === 'LANDMARK') {
+                newState.rareBalance = (newState.rareBalance || 0) + value;
+                newState.rareItemsCollected = (newState.rareItemsCollected || 0) + 1;
+            } else if (category === 'EVENT') {
+                newState.eventBalance = (newState.eventBalance || 0) + value;
+                newState.eventItemsCollected = (newState.eventItemsCollected || 0) + 1;
+            } else if (category === 'MERCHANT') {
+                newState.merchantBalance = (newState.merchantBalance || 0) + value;
+                newState.sponsoredAdsWatched = (newState.sponsoredAdsWatched || 0) + 1;
+            } else if (category === 'AD_REWARD') {
+                newState.dailySupplyBalance = (newState.dailySupplyBalance || 0) + value;
+            } else {
+                // URBAN, MALL și GIFTBOX (puncte) merg în Gameplay
+                newState.gameplayBalance = (newState.gameplayBalance || 0) + value;
+            }
+
+            return newState;
+        });
 
         if (userState.telegramId) {
             await saveCollectionToFirebase(userState.telegramId, spawnId, value, category, tonReward, userState.location || undefined, challenge);
@@ -246,7 +265,6 @@ function App() {
                 {activeTab === Tab.WALLET && <WalletView userState={userState} onAdReward={(amt) => handleCollect('ad-' + Date.now(), amt, 'AD_REWARD')} onInvite={handleInvite} />}
                 {activeTab === Tab.FRENS && <FrensView referralCount={userState.referrals} referralNames={userState.referralNames} onInvite={handleInvite} />}
                 {activeTab === Tab.ADS && <AdsView userLocation={userState.location} collectedIds={userState.collectedIds} myCampaigns={campaigns.filter(c => c.ownerWallet === userWalletAddress)} onSubmitApplication={async (coords, count, mult, price, data) => { await createCampaignFirebase({ id: `camp-${Date.now()}`, ownerWallet: userWalletAddress || 'anon', targetCoords: coords, count, multiplier: mult, durationDays: data.durationDays, totalPrice: price, data: { ...data, status: AdStatus.PENDING_REVIEW }, timestamp: Date.now() }); }} onPayCampaign={(id) => updateCampaignStatusFirebase(id, AdStatus.ACTIVE)} isTestMode={isTestMode} />}
-                {/* Fixed incorrect variable name onDeleteHotspotFirebase to deleteHotspotFirebase */}
                 {activeTab === Tab.ADMIN && <AdminView allCampaigns={campaigns} customHotspots={customHotspots} onSaveHotspots={async (newH) => { for (const h of newH) await saveHotspotFirebase(h); }} onDeleteHotspot={deleteHotspotFirebase} onDeleteCampaign={deleteCampaignFirebase} onApprove={(id) => updateCampaignStatusFirebase(id, AdStatus.ACTIVE)} onReject={(id) => updateCampaignStatusFirebase(id, AdStatus.REJECTED)} onResetMyAccount={async () => { if (userState.telegramId) { await resetUserInFirebase(userState.telegramId); window.location.reload(); } }} isTestMode={isTestMode} onToggleTestMode={() => setIsTestMode(!isTestMode)} />}
             </div>
             {(activeTab === Tab.MAP || activeTab === Tab.HUNT) && <button onClick={() => setShowAIChat(true)} className="fixed right-6 bottom-24 z-[999] w-12 h-12 bg-cyan-600 rounded-full flex items-center justify-center border border-cyan-400 animate-bounce shadow-xl"><Sparkles className="text-white" size={20} /></button>}
