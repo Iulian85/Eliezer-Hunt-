@@ -12,28 +12,52 @@ if (getApps().length === 0) {
 const db = getFirestore();
 
 export const resetUserProtocol = onCall(async (request) => {
-    // Eliminăm orice verificare de context.auth pentru a asigura funcționarea instantanee
     if (!request.data || !request.data.targetUserId) {
-        throw new HttpsError('invalid-argument', 'Missing targetUserId payload');
+        throw new HttpsError('invalid-argument', 'Missing targetUserId');
     }
 
     const targetIdStr = request.data.targetUserId.toString();
     const targetIdNum = parseInt(targetIdStr);
     
-    console.log(`[SYSTEM] Starting Global Wipe for ID: ${targetIdStr}`);
+    console.log(`[ADMIN-ACTION] Initializing Soft Reset for ID: ${targetIdStr}`);
 
     try {
-        // 1. Ștergere atomică a profilului (asigură resetarea UI la reload)
-        await db.collection('users').doc(targetIdStr).delete();
+        // 1. Definim setul de date pentru RESET (Zero Out)
+        const resetData = {
+            balance: 0,
+            tonBalance: 0,
+            gameplayBalance: 0,
+            rareBalance: 0,
+            eventBalance: 0,
+            dailySupplyBalance: 0,
+            merchantBalance: 0,
+            referralBalance: 0,
+            collectedIds: [],
+            referralNames: [],
+            hasClaimedReferral: false,
+            lastAdWatch: 0,
+            lastDailyClaim: 0,
+            adsWatched: 0,
+            sponsoredAdsWatched: 0,
+            rareItemsCollected: 0,
+            eventItemsCollected: 0,
+            referrals: 0,
+            // Păstrăm: username, photoUrl, joinedAt, deviceFingerprint, biometricEnabled, walletAddress
+            lastActive: FieldValue.serverTimestamp()
+        };
 
-        // 2. Funcție pentru ștergere sigură în loturi (previne eroarea 500 documents limit)
-        const purgeCollection = async (collectionName: string, fieldName: string, values: any[]) => {
+        // 2. Executăm UPDATE pe profil (nu delete!)
+        await db.collection('users').doc(targetIdStr).update(resetData);
+
+        // 3. Helper pentru curățare loturi de documente asociate
+        const purgeUserHistory = async (collectionName: string, fieldName: string, values: any[]) => {
             const snapshot = await db.collection(collectionName).where(fieldName, 'in', values).get();
             if (snapshot.empty) return;
 
             const chunks = [];
-            for (let i = 0; i < snapshot.docs.length; i += 450) {
-                chunks.push(snapshot.docs.slice(i, i + 450));
+            const docs = snapshot.docs;
+            for (let i = 0; i < docs.length; i += 450) {
+                chunks.push(docs.slice(i, i + 450));
             }
 
             for (const chunk of chunks) {
@@ -43,19 +67,27 @@ export const resetUserProtocol = onCall(async (request) => {
             }
         };
 
-        const targetIds = [targetIdStr, targetIdNum];
+        const ids = [targetIdStr, targetIdNum];
 
-        // 3. Executăm curățarea pe toate tabelele critice
-        await purgeCollection('claims', 'userId', targetIds);
-        await purgeCollection('ad_claims', 'userId', targetIds);
-        await purgeCollection('withdrawal_requests', 'userId', targetIds);
-        await purgeCollection('referral_claims', 'referrerId', targetIds);
-        await purgeCollection('ad_sessions', 'userId', targetIds);
+        // 4. Curățăm istoricul de tranzacții care ar putea declanșa recalculări de balanță
+        await purgeUserHistory('claims', 'userId', ids);
+        await purgeUserHistory('ad_claims', 'userId', ids);
+        await purgeUserHistory('withdrawal_requests', 'userId', ids);
+        await purgeUserHistory('ad_sessions', 'userId', ids);
+        
+        // 5. Ștergem referral-urile trimise de acest admin (unde el este referrer)
+        await purgeUserHistory('referral_claims', 'referrerId', ids);
 
-        return { success: true, message: "IDENTITY_PURGED" };
+        console.log(`[SUCCESS] Account ${targetIdStr} reset to zero.`);
+        return { success: true, message: "ACCOUNT_REINITIALIZED" };
+
     } catch (e: any) {
-        console.error("[CRITICAL] Wipe Protocol Failure:", e);
-        throw new HttpsError('internal', `Wipe Protocol Aborted: ${e.message}`);
+        console.error("[CRITICAL] Reset Protocol Failed:", e);
+        // Dacă eroarea este că documentul nu există (deși n-ar trebui), e tot un fel de succes pentru reset
+        if (e.message.includes('NOT_FOUND')) {
+             return { success: true, message: "ALREADY_CLEAN" };
+        }
+        throw new HttpsError('internal', `Reset failed: ${e.message}`);
     }
 });
 

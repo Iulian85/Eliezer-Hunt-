@@ -234,7 +234,7 @@ export const resetUserInFirebase = async (targetUserId: number): Promise<{succes
         if (result.data && result.data.success) {
             return { success: true };
         }
-        return { success: false, error: "Server Wipe Failed" };
+        return { success: false, error: "Server Rejected Request" };
     } catch (e: any) {
         console.error("Reset trigger failed", e);
         return { success: false, error: e.message };

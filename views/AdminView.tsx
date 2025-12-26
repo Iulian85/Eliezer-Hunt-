@@ -38,6 +38,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
     const [searchQuery, setSearchQuery] = useState('');
     const [previewVideo, setPreviewVideo] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const [isResetting, setIsResetting] = useState(false);
 
     // Hotspot State
     const [hForm, setHForm] = useState<Partial<HotspotDefinition>>({
@@ -86,6 +87,17 @@ export const AdminView: React.FC<AdminViewProps> = ({
                 loadUsers();
             } else {
                 alert(`Reset Error: ${res.error}`);
+            }
+        }
+    };
+
+    const handleSystemReset = async () => {
+        if (window.confirm("PROTOCOL INITIATED: Reset your admin account balance and progress to zero? (Identity will be preserved)")) {
+            setIsResetting(true);
+            try {
+                await onResetMyAccount();
+            } finally {
+                setIsResetting(false);
             }
         }
     };
@@ -236,7 +248,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                                 </div>
                             </div>
                             <div className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-widest border
-                                ${campaign.data.status === AdStatus.PENDING_REVIEW ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' :
+                                ${campaign.data.status === AdStatus.PENDING_REVIEW ? 'bg-amber-500/10 text-amber-500 border-amber-500/20' :
                                   campaign.data.status === AdStatus.ACTIVE ? 'bg-green-500/10 text-green-400 border-green-500/20' :
                                   'bg-red-500/10 text-red-400 border-red-500/20'}
                             `}>
@@ -628,7 +640,14 @@ export const AdminView: React.FC<AdminViewProps> = ({
                         <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2"><AlertTriangle className="text-red-500" /> DANGER ZONE</h2>
                         <div className="space-y-4">
                             <button onClick={onToggleTestMode} className={`w-full py-3 rounded-xl font-bold text-xs ${isTestMode ? 'bg-green-500 text-black' : 'bg-slate-800 text-slate-500'}`}>TEST MODE: {isTestMode ? 'ON' : 'OFF'}</button>
-                            <button onClick={onResetMyAccount} className="w-full py-3 bg-red-600 rounded-xl font-bold text-xs">RESET MY ACCOUNT</button>
+                            <button 
+                                onClick={handleSystemReset} 
+                                disabled={isResetting}
+                                className="w-full py-3 bg-red-600 hover:bg-red-500 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-50"
+                            >
+                                {isResetting ? <Loader2 className="animate-spin" size={16}/> : <RefreshCw size={16}/>}
+                                RESET MY ACCOUNT
+                            </button>
                         </div>
                     </div>
                 )}
