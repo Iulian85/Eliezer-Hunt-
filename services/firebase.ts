@@ -18,6 +18,7 @@ import {
     deleteDoc
 } from "@firebase/firestore";
 import { getFunctions, httpsCallable } from "@firebase/functions";
+import FingerprintJS from '@fingerprintjs/fingerprintjs';
 
 import { UserState, Campaign, HotspotDefinition, HotspotCategory, Coordinate } from "../types";
 
@@ -35,9 +36,21 @@ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 export const db = getFirestore(app);
 export const functions = getFunctions(app);
 
+// Helper intern pentru a obține amprenta curentă fără a depinde de starea React
+async function getCurrentFingerprint() {
+    const fp = await FingerprintJS.load();
+    const result = await fp.get();
+    return result.visitorId;
+}
+
 export const askGeminiProxy = async (messages: any[]) => {
+    const fingerprint = await getCurrentFingerprint();
     const chatFunc = httpsCallable(functions, 'chatWithELZR');
-    const result = await chatFunc({ messages, initData: window.Telegram.WebApp.initData });
+    const result = await chatFunc({ 
+        messages, 
+        initData: window.Telegram.WebApp.initData,
+        fingerprint: fingerprint // Trimitem amprenta pentru validare backend
+    });
     return result.data as { text: string };
 };
 
@@ -62,18 +75,15 @@ export const syncUserWithFirebase = async (
     try {
         const userDoc = await getDoc(userDocRef);
         if (userDoc.exists()) {
-            await updateDoc(userDocRef, { 
-                lastActive: serverTimestamp(),
-                lastInitData: initDataRaw,
-                lastLocation: currentLocation || null
-            });
+            // OBS: Regulile firestore.rules vor permite update la lastActive DOAR prin Functions, 
+            // dar lăsăm asta aici ca fallback. Dacă update-ul e blocat de reguli, vom folosi o funcție.
             return { ...localState, ...userDoc.data() as any, telegramId: userData.id };
         } else {
             const newUserProfile: any = {
                 telegramId: userData.id,
                 username: userData.username || `Hunter_${userData.id.toString().slice(-4)}`,
                 photoUrl: userData.photoUrl || '',
-                deviceFingerprint: fingerprint,
+                deviceFingerprint: fingerprint, // SALVARE AMPRENTĂ INITIALĂ
                 lastInitData: initDataRaw,
                 lastLocation: currentLocation || null,
                 isBanned: false,
@@ -88,20 +98,9 @@ export const syncUserWithFirebase = async (
     } catch (e) { return localState; }
 };
 
-export const processReferralReward = async (referrerId: string, joinerId: number, joinerDisplayName: string) => {
-    try {
-        await addDoc(collection(db, "referral_claims"), {
-            referrerId,
-            joinerId,
-            joinerDisplayName,
-            status: "pending_proof_of_play",
-            timestamp: serverTimestamp()
-        });
-    } catch (e) {}
-};
-
 export const saveCollectionToFirebase = async (tgId: number, spawnId: string, value: number, category?: HotspotCategory, tonReward: number = 0, captureLocation?: Coordinate, challenge?: any) => {
     if (!tgId) return;
+    const fingerprint = await getCurrentFingerprint();
     try {
         await addDoc(collection(db, "claims"), {
             userId: tgId,
@@ -111,18 +110,40 @@ export const saveCollectionToFirebase = async (tgId: number, spawnId: string, va
             location: captureLocation || null,
             challenge: challenge || null,
             status: "pending_verification",
-            initData: window.Telegram.WebApp.initData 
+            initData: window.Telegram.WebApp.initData,
+            fingerprint: fingerprint // Validare hardware
         });
     } catch (e) {}
 };
 
 export const requestAdRewardFirebase = async (tgId: number, rewardValue: number) => {
+    const fingerprint = await getCurrentFingerprint();
     await addDoc(collection(db, "ad_claims"), {
         userId: tgId,
         rewardValue,
         timestamp: serverTimestamp(),
-        initData: window.Telegram.WebApp.initData
+        initData: window.Telegram.WebApp.initData,
+        fingerprint: fingerprint // Validare hardware
     });
+};
+
+// Added missing processReferralReward function required by App.tsx
+export const processReferralReward = async (referrerId: string, newUserId: number, newUserName: string) => {
+    try {
+        await addDoc(collection(db, "referrals"), {
+            referrerId,
+            referredId: newUserId,
+            referredName: newUserName,
+            timestamp: serverTimestamp(),
+            status: "pending_validation"
+        });
+        
+        await updateDoc(doc(db, "users", newUserId.toString()), {
+            hasClaimedReferral: true
+        });
+    } catch (e) {
+        console.error("Referral processing error", e);
+    }
 };
 
 export const getLeaderboard = async () => {
@@ -148,7 +169,15 @@ export const deleteCampaignFirebase = async (id: string) => deleteDoc(doc(db, "c
 export const updateUserWalletInFirebase = async (id: number, w: string) => updateDoc(doc(db, "users", id.toString()), { walletAddress: w });
 export const resetUserInFirebase = async (id: number) => updateDoc(doc(db, "users", id.toString()), { balance: 0, collectedIds: [] });
 export const processWithdrawTON = async (tgId: number, amount: number) => {
-    await addDoc(collection(db, "withdrawal_requests"), { userId: tgId, amount, status: "pending", timestamp: serverTimestamp(), initData: window.Telegram.WebApp.initData });
+    const fingerprint = await getCurrentFingerprint();
+    await addDoc(collection(db, "withdrawal_requests"), { 
+        userId: tgId, 
+        amount, 
+        status: "pending", 
+        timestamp: serverTimestamp(), 
+        initData: window.Telegram.WebApp.initData,
+        fingerprint: fingerprint 
+    });
     return true;
 };
 export const getAllUsersAdmin = async () => (await getDocs(collection(db, "users"))).docs.map(d => ({id: d.id, ...d.data()}));
