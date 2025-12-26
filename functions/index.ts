@@ -11,19 +11,16 @@ if (getApps().length === 0) {
 }
 
 const db = getFirestore();
-
-// NOTĂ: Acestea trebuie setate în Firebase Console (Functions > Variables)
-// Dacă lipsesc, funcția va fallback-ui pe verificarea identității simple
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 
 async function validateAndCheckReplay(initData: string): Promise<boolean> {
-    if (!initData || !BOT_TOKEN) return true; // Debug mode: permite dacă tokenul nu e setat încă
+    if (!initData || !BOT_TOKEN) return true; // Permitem în debug dacă lipsește tokenul
     try {
         const urlParams = new URLSearchParams(initData);
         const hash = urlParams.get('hash');
         const authDate = parseInt(urlParams.get('auth_date') || '0');
         const now = Math.floor(Date.now() / 1000);
-        if (now - authDate > 600) return false; 
+        if (now - authDate > 1200) return false; // Sesiune validă 20 min
 
         urlParams.delete('hash');
         const sortedParams = Array.from(urlParams.entries()).sort().map(([k, v]) => `${k}=${v}`).join('\n');
@@ -41,44 +38,40 @@ async function validateAndCheckReplay(initData: string): Promise<boolean> {
     } catch (e) { return false; }
 }
 
-// Resetare COMPLETĂ (Ștergere document)
+// FUNCȚIE SERVER: Ștergere DEFINITIVĂ
 export const resetUserProtocol = onCall(async (request) => {
     try {
         const { data } = request;
-        if (!data || !data.targetUserId) {
-            throw new HttpsError('invalid-argument', 'Missing Target User ID');
-        }
+        if (!data || !data.targetUserId) throw new HttpsError('invalid-argument', 'Missing Target ID');
 
         if (!(await validateAndCheckReplay(data.initData))) {
-            throw new HttpsError('unauthenticated', 'Session Invalid or Expired');
+            throw new HttpsError('unauthenticated', 'Session Expired');
         }
 
         const targetUserId = data.targetUserId.toString();
         const adminTgId = data.adminTgId ? data.adminTgId.toString() : "";
         
-        // Verificare de securitate simplificată pentru a evita crash-ul de environment
-        // Permitem resetarea dacă Admin ID == Target ID (auto-curățare) 
-        // SAU dacă adresa de wallet a adminului este configurată corect în DB
+        // Verificăm dacă cel care cere e Admin sau e auto-resetare
         const adminDoc = await db.collection('users').doc(adminTgId).get();
-        const isAdminAction = adminTgId === targetUserId || (adminDoc.exists && adminDoc.data()?.role === 'admin');
+        const isSelf = adminTgId === targetUserId;
+        const isAdmin = adminDoc.exists && adminDoc.data()?.role === 'admin';
 
-        if (!isAdminAction) {
-            throw new HttpsError('permission-denied', 'Only authorized system administrators can trigger a WIPE.');
+        if (!isSelf && !isAdmin) {
+            throw new HttpsError('permission-denied', 'Not Authorized');
         }
 
-        // EXECUȚIE: Ștergem documentul complet pentru a forța re-inițializarea la următorul login
+        // 1. Ștergem documentul User
         await db.collection('users').doc(targetUserId).delete();
         
-        // Ștergem și claim-urile asociate ca să nu rămână orfane (opțional, dar curat)
+        // 2. Ștergem toate colectările (claim-urile) acestui user
         const claimsQuery = await db.collection('claims').where('userId', '==', parseInt(targetUserId)).get();
         const batch = db.batch();
         claimsQuery.forEach(doc => batch.delete(doc.ref));
         await batch.commit();
 
-        return { success: true, message: "Baza de date a fost curățată cu succes." };
-    } catch (error: any) {
-        console.error("Wipe Error:", error);
-        throw new HttpsError('internal', error.message || 'Unknown protocol crash');
+        return { success: true };
+    } catch (e: any) {
+        throw new HttpsError('internal', e.message || 'Protocol Crash');
     }
 });
 
@@ -97,16 +90,12 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
     const snap = event.data;
     if (!snap) return;
     const claim = snap.data();
-    
     const userRef = db.collection('users').doc(claim.userId.toString());
-    const userDoc = await userRef.get();
-    if (!userDoc.exists) return;
-
-    await db.runTransaction(async (tx) => {
-        tx.update(userRef, {
-            balance: FieldValue.increment(claim.claimedValue || 100),
-            lastActive: FieldValue.serverTimestamp()
-        });
-        tx.update(snap.ref, { status: 'verified' });
+    await userRef.update({
+        balance: FieldValue.increment(claim.claimedValue || 100),
+        tonBalance: FieldValue.increment(claim.tonReward || 0),
+        collectedIds: FieldValue.arrayUnion(claim.spawnId),
+        lastActive: FieldValue.serverTimestamp()
     });
+    await snap.ref.update({ status: 'verified' });
 });
