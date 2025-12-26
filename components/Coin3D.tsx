@@ -1,8 +1,7 @@
 
 import React, { useRef, useState, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
-// Added Billboard to the imports from @react-three/drei
-import { Text, Cylinder, Sparkles, Float, Circle, Box, Octahedron, Billboard } from '@react-three/drei';
+import { Text, Cylinder, Sparkles, Float, Circle, Box, Octahedron } from '@react-three/drei';
 import * as THREE from 'three';
 
 const Group = 'group' as any;
@@ -227,26 +226,41 @@ export const Coin3D: React.FC<Coin3DProps> = ({
                                 </Mesh>
                                 <Mesh position={[dot.x, dot.y, -0.14]}>
                                     <SphereGeometry args={[0.08, 8, 8]} />
-                                    <MeshStandardMaterial color={isEvent ? "#ef4444" : "#FFFFFF"} emissive={isEvent ? "#ef4444" : "#FFFFFF"} emissiveIntensity={1} />
+                                    <MeshStandardMaterial color={isEvent ? "#ef4444" : "#FFFFE0"} emissive={isEvent ? "#ef4444" : "#FFFFFF"} emissiveIntensity={1} />
                                 </Mesh>
                             </Group>
                         ))}
 
-                        <Billboard position={[0, 0, 0.16]}>
-                            <Text fontSize={displayText.length > 5 ? 0.7 : 0.9} anchorX="center" anchorY="middle" outlineWidth={0.04} outlineColor="#000000">
-                                {displayText}
-                                <MeshStandardMaterial color={isEvent || isSponsored ? "#ffffff" : primaryColor} />
-                            </Text>
-                        </Billboard>
+                        {/* TEXTUL ESTE ACUM POZIȚIONAT FIX (LIPIT) PE MONEDĂ, FĂRĂ BILLBOARD */}
+                        <Text 
+                            position={[0, 0, 0.14]} 
+                            fontSize={displayText.length > 5 ? 0.7 : 0.9} 
+                            anchorX="center" 
+                            anchorY="middle" 
+                            outlineWidth={0.04} 
+                            outlineColor="#000000"
+                            font="https://fonts.gstatic.com/s/rajdhani/v15/L7rgdfpPBq9hS5p9p76p.woff"
+                        >
+                            {displayText}
+                            <MeshStandardMaterial color={(isEvent || isSponsored) ? "#ffffff" : "#FFD700"} emissive={(isEvent || isSponsored) ? "#ffffff" : "#FFD700"} emissiveIntensity={0.2} />
+                        </Text>
 
                         {texture ? (
-                            <Mesh position={[0, 0, -0.15]} rotation={[0, Math.PI, 0]}>
+                            <Mesh position={[0, 0, -0.14]} rotation={[0, Math.PI, 0]}>
                                 <Circle args={[1.6, 32]}>
                                     <MeshStandardMaterial map={texture} transparent={true} side={THREE.DoubleSide} emissive="#ffffff" emissiveIntensity={0.2} />
                                 </Circle>
                             </Mesh>
                         ) : (
-                            <Text position={[0, 0, -0.15]} rotation={[0, Math.PI, 0]} fontSize={1.8} anchorX="center" anchorY="middle" outlineWidth={0.04} outlineColor="#2a1a00">
+                            <Text 
+                                position={[0, 0, -0.14]} 
+                                rotation={[0, Math.PI, 0]} 
+                                fontSize={1.8} 
+                                anchorX="center" 
+                                anchorY="middle" 
+                                outlineWidth={0.04} 
+                                outlineColor="#2a1a00"
+                            >
                                 {isEvent ? "🎄" : (isSponsored ? "📣" : "$")}
                                 <MeshStandardMaterial color={primaryColor} />
                             </Text>
