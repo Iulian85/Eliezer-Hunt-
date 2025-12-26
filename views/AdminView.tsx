@@ -218,7 +218,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
         totalHotspots: customHotspots.length
     };
 
-    // FUNCȚIA NOUĂ: RESET ADMIN CU ECRAN BIOMETRIC IDENTIC CU CEL DE LA INTRARE
+    // RESET ADMIN CU ECRAN BIOMETRIC + RE-INIȚIALIZARE bm.init()
     const handleAdminReset = () => {
         setShowResetBiometric(true);
     };
@@ -233,8 +233,16 @@ export const AdminView: React.FC<AdminViewProps> = ({
         setIsAuthenticatingReset(true);
 
         const bm = tg.BiometricManager;
+
+        // FIX-UL ESENȚIAL: RE-INIȚIALIZĂM BIOMETRIA CHIAR AICI
+        if (bm) {
+            await new Promise<void>((resolve) => {
+                bm.init(() => resolve());
+            });
+        }
+
         if (!bm || !bm.available) {
-            alert("Biometria nu este disponibilă pe acest dispozitiv.");
+            alert("Biometria nu este disponibilă pe acest dispozitiv după re-inițializare.");
             setIsAuthenticatingReset(false);
             setShowResetBiometric(false);
             return;
@@ -274,7 +282,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
         });
     };
 
-    // ECRAN BIOMETRIC IDENTIC CU CEL DE LA INTRAREA ÎN APP
+    // ECRAN BIOMETRIC PENTRU RESET ADMIN
     if (showResetBiometric) {
         return (
             <div className="h-screen w-screen bg-[#020617] flex flex-col items-center justify-center p-8 relative overflow-hidden">
