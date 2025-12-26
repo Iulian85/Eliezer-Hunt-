@@ -72,38 +72,30 @@ export const resetUserProtocol = onCall(async (request) => {
 
 /**
  * TRIGGER: Procesare monede colectate (MAP/HUNT/GIFTBOX/ADS)
- * REZOLVARE: Actualizează balanța indiferent de categorie.
+ * REZOLVARE: Creează documentul de user dacă lipsește pentru a preveni pierderea punctelor.
  */
 export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event) => {
     const snap = event.data;
     if (!snap) return;
     const claim = snap.data();
     
-    // Convertim ID-ul în string pentru a asigura potrivirea cu Document ID
     const userIdStr = claim.userId.toString();
     const userRef = db.collection('users').doc(userIdStr);
     
-    const userDoc = await userRef.get();
-    if (!userDoc.exists) {
-        console.error(`User document ${userIdStr} not found for claim`);
-        return;
-    }
-
     const value = Number(claim.claimedValue || 0);
     const tonValue = Number(claim.tonReward || 0);
 
     const updates: any = {
+        telegramId: Number(claim.userId),
         balance: FieldValue.increment(value),
         tonBalance: FieldValue.increment(tonValue),
         lastActive: FieldValue.serverTimestamp()
     };
 
-    // Dacă nu e reclamă repetabilă, o adăugăm la ID-urile colectate
     if (!claim.spawnId.startsWith('ad-')) {
         updates.collectedIds = FieldValue.arrayUnion(claim.spawnId);
     }
 
-    // Actualizăm sub-balanțele specifice
     switch (claim.category) {
         case 'URBAN': 
         case 'MALL': 
@@ -122,15 +114,16 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
             updates.sponsoredAdsWatched = FieldValue.increment(1);
             break;
         case 'GIFTBOX':
-            // Giftbox-urile pot da și TON și Puncte
             updates.gameplayBalance = FieldValue.increment(value);
             break;
         case 'AD_REWARD':
             updates.dailySupplyBalance = FieldValue.increment(value);
             updates.adsWatched = FieldValue.increment(1);
+            updates.lastDailyClaim = Date.now();
             break;
     }
 
+    // Folosim SET MERGE pentru a asigura că documentul se creează dacă nu există
     await userRef.set(updates, { merge: true });
     await snap.ref.update({ status: 'verified' });
 });
@@ -145,12 +138,10 @@ export const onAdClaimCreated = onDocumentCreated('ad_claims/{claimId}', async (
     const userIdStr = claim.userId.toString();
     const userRef = db.collection('users').doc(userIdStr);
     
-    const userDoc = await userRef.get();
-    if (!userDoc.exists) return;
-
     const value = Number(claim.rewardValue || 0);
 
     await userRef.set({
+        telegramId: Number(claim.userId),
         balance: FieldValue.increment(value),
         dailySupplyBalance: FieldValue.increment(value),
         adsWatched: FieldValue.increment(1),
