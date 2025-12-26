@@ -218,7 +218,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
         totalHotspots: customHotspots.length
     };
 
-    // RESET ADMIN CU ECRAN BIOMETRIC + RE-INIȚIALIZARE bm.init()
+    // RESET ADMIN CU ECRAN BIOMETRIC + FIX FINAL (callback cu success, err + re-init)
     const handleAdminReset = () => {
         setShowResetBiometric(true);
     };
@@ -234,7 +234,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
 
         const bm = tg.BiometricManager;
 
-        // FIX-UL ESENȚIAL: RE-INIȚIALIZĂM BIOMETRIA CHIAR AICI
+        // Re-inițializăm biometria
         if (bm) {
             await new Promise<void>((resolve) => {
                 bm.init(() => resolve());
@@ -242,44 +242,54 @@ export const AdminView: React.FC<AdminViewProps> = ({
         }
 
         if (!bm || !bm.available) {
-            alert("Biometria nu este disponibilă pe acest dispozitiv după re-inițializare.");
+            alert("Biometria nu este disponibilă pe acest dispozitiv.");
             setIsAuthenticatingReset(false);
             setShowResetBiometric(false);
             return;
         }
 
-        bm.authenticate({ reason: "Confirmare reset complet cont admin ELZR Hunt" }, async (success) => {
-            setIsAuthenticatingReset(false);
-            if (!success) {
-                alert("Verificare biometrică eșuată. Reset abortat.");
-                setShowResetBiometric(false);
-                return;
-            }
+        bm.authenticate(
+            { reason: "Confirmare reset complet cont admin ELZR Hunt" },
+            async (success, err) => {
+                setIsAuthenticatingReset(false);
 
-            try {
-                const fingerprint = await getCurrentFingerprint();
-                const cloudUuid = await getCloudStorageId();
-                const tgId = (tg.initDataUnsafe as any)?.user?.id;
-
-                const resetFunc = httpsCallable(functions, 'resetUserProtocol');
-                const result: any = await resetFunc({
-                    targetUserId: tgId,
-                    fingerprint,
-                    cloudUuid
-                });
-
-                if (result.data.success) {
-                    alert("Reset complet reușit! Contul admin este curat.");
-                    window.location.reload();
-                } else {
-                    alert("Reset eșuat: " + result.data.message);
+                if (err) {
+                    alert("Eroare biometrică: " + err);
+                    setShowResetBiometric(false);
+                    return;
                 }
-            } catch (err: any) {
-                alert("Eroare reset: " + err.message);
-            } finally {
-                setShowResetBiometric(false);
+
+                if (!success) {
+                    alert("Verificare biometrică eșuată. Reset abortat.");
+                    setShowResetBiometric(false);
+                    return;
+                }
+
+                try {
+                    const fingerprint = await getCurrentFingerprint();
+                    const cloudUuid = await getCloudStorageId();
+                    const tgId = (tg.initDataUnsafe as any)?.user?.id;
+
+                    const resetFunc = httpsCallable(functions, 'resetUserProtocol');
+                    const result: any = await resetFunc({
+                        targetUserId: tgId,
+                        fingerprint,
+                        cloudUuid
+                    });
+
+                    if (result.data.success) {
+                        alert("Reset complet reușit! Contul admin este curat.");
+                        window.location.reload();
+                    } else {
+                        alert("Reset eșuat: " + result.data.message);
+                    }
+                } catch (err: any) {
+                    alert("Eroare reset: " + err.message);
+                } finally {
+                    setShowResetBiometric(false);
+                }
             }
-        });
+        );
     };
 
     // ECRAN BIOMETRIC PENTRU RESET ADMIN
