@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Campaign, AdStatus, HotspotDefinition, HotspotCategory, Coordinate } from '../types';
 import { ShieldCheck, Check, X, Play, Clock, AlertTriangle, Users, Ban, Wallet, Globe, Search, Lock, Unlock, LayoutDashboard, Megaphone, BarChart3, Settings, Trash2, UserX, FlaskConical, MapPin, Plus, Edit2, Coins, Map as MapIcon, Upload, Image as ImageIcon, Loader2, Gift, Calendar, Activity, History, RotateCcw, AlertCircle, Fingerprint, RefreshCw } from 'lucide-react';
@@ -6,6 +5,9 @@ import { UniversalVideoPlayer } from '../components/UniversalVideoPlayer';
 import { MapContainer, TileLayer, Marker, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import { getAllUsersAdmin, deleteUserFirebase, toggleUserBan, resetUserInFirebase, toggleUserBiometricSetting } from '../services/firebase';
+import { getCurrentFingerprint, getCloudStorageId } from '../services/firebase';
+import { httpsCallable } from '@firebase/functions';
+import { functions } from '../services/firebase';
 
 interface AdminViewProps {
     allCampaigns: Campaign[];
@@ -88,34 +90,6 @@ export const AdminView: React.FC<AdminViewProps> = ({
             } else {
                 alert(`Reset Error: ${res.error}`);
             }
-        }
-    };
-
-    const handleSystemReset = async () => {
-        const tg = window.Telegram?.WebApp;
-        if (!tg) {
-            alert("This action requires Telegram environment.");
-            return;
-        }
-
-        const confirmReset = () => {
-            if (window.confirm("CRITICAL PROTOCOL: Reset ALL your data (Balance, Wallet, Frens) to zero? Identity will be preserved.")) {
-                setIsResetting(true);
-                onResetMyAccount();
-            }
-        };
-
-        // Solicita amprenta dacă este disponibilă
-        if (tg.BiometricManager?.available) {
-            tg.BiometricManager.authenticate({ reason: "Confirm nuclear reset of admin account" }, (success) => {
-                if (success) {
-                    confirmReset();
-                } else {
-                    alert("Biometric verification failed. Protocol aborted.");
-                }
-            });
-        } else {
-            confirmReset();
         }
     };
 
@@ -252,7 +226,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
             ) : (
                 allCampaigns.map(campaign => (
                     <div key={campaign.id} className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-lg mb-4">
-                        <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-800/20">
+                        <div className="p-4 border-b border-slate-800 flex justify-between items-center">
                             <div className="flex items-center gap-3">
                                 {campaign.data.logoUrl && (
                                     <div className="w-8 h-8 rounded-lg overflow-hidden border border-slate-700">
@@ -475,6 +449,60 @@ export const AdminView: React.FC<AdminViewProps> = ({
         </div>
     );
 
+    // FUNCȚIA NOUĂ DE RESET ADMIN CU AMPRENTĂ
+    const handleAdminReset = async () => {
+        const tg = window.Telegram?.WebApp;
+        if (!tg) {
+            alert("Trebuie să fii în Telegram pentru reset admin.");
+            return;
+        }
+
+        if (isResetting) return;
+
+        const confirmFirst = window.confirm("ADMIN NUCLEAR RESET: Toate punctele, wallet-ul și referalii vor fi șterse. Profilul rămâne. Continui?");
+        if (!confirmFirst) return;
+
+        const bm = tg.BiometricManager;
+        if (!bm || !bm.available) {
+            alert("Biometria nu este disponibilă pe acest dispozitiv. Reset abortat.");
+            return;
+        }
+
+        setIsResetting(true);
+
+        bm.authenticate({ reason: "Confirmare reset complet cont admin ELZR Hunt" }, async (success) => {
+            if (!success) {
+                alert("Verificare biometrică eșuată. Reset abortat.");
+                setIsResetting(false);
+                return;
+            }
+
+            try {
+                const fingerprint = await getCurrentFingerprint();
+                const cloudUuid = await getCloudStorageId();
+                const tgId = (tg.initDataUnsafe as any)?.user?.id;
+
+                const resetFunc = httpsCallable(functions, 'resetUserProtocol');
+                const result: any = await resetFunc({
+                    targetUserId: tgId,
+                    fingerprint,
+                    cloudUuid
+                });
+
+                if (result.data.success) {
+                    alert("Reset complet reușit! Contul admin este curat.");
+                    window.location.reload();
+                } else {
+                    alert("Reset eșuat: " + result.data.message);
+                }
+            } catch (err: any) {
+                alert("Eroare reset: " + err.message);
+            } finally {
+                setIsResetting(false);
+            }
+        });
+    };
+
     return (
         <div className="h-full w-full bg-slate-950 flex flex-col">
             <div className="bg-slate-900 border-b border-slate-800 p-4 pb-0">
@@ -658,12 +686,16 @@ export const AdminView: React.FC<AdminViewProps> = ({
                         <div className="space-y-4">
                             <button onClick={onToggleTestMode} className={`w-full py-3 rounded-xl font-bold text-xs ${isTestMode ? 'bg-green-500 text-black' : 'bg-slate-800 text-slate-500'}`}>TEST MODE: {isTestMode ? 'ON' : 'OFF'}</button>
                             <button 
-                                onClick={handleSystemReset} 
+                                onClick={handleAdminReset}
                                 disabled={isResetting}
-                                className="w-full py-3 bg-red-600 hover:bg-red-500 text-white rounded-xl font-black text-xs flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-50 shadow-lg shadow-red-900/20"
+                                className="w-full py-4 bg-gradient-to-r from-red-600 to-red-800 hover:from-red-500 hover:to-red-700 text-white rounded-2xl font-black text-sm uppercase tracking-widest flex items-center justify-center gap-3 transition-all active:scale-95 shadow-2xl shadow-red-900/50 disabled:opacity-60"
                             >
-                                {isResetting ? <Loader2 className="animate-spin" size={16}/> : <Fingerprint size={16}/>}
-                                RESET MY ACCOUNT (BIOMETRIC)
+                                {isResetting ? (
+                                    <Loader2 className="animate-spin" size={22} />
+                                ) : (
+                                    <Fingerprint size={22} />
+                                )}
+                                {isResetting ? 'RESETARE ÎN CURS...' : 'RESET MY ACCOUNT (BIOMETRIC REQUIRED)'}
                             </button>
                         </div>
                     </div>

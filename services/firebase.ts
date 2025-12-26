@@ -1,4 +1,3 @@
-
 import { initializeApp, getApps, getApp } from "@firebase/app";
 import { 
     getFirestore, 
@@ -36,7 +35,8 @@ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 export const db = getFirestore(app);
 export const functions = getFunctions(app);
 
-async function getCurrentFingerprint() {
+// ACUM E EXPORTATĂ CORECT!
+export async function getCurrentFingerprint() {
     const fp = await FingerprintJS.load();
     const result = await fp.get();
     return result.visitorId;
@@ -231,15 +231,13 @@ export const resetUserInFirebase = async (targetUserId: number): Promise<{succes
     try {
         const resetFunc = httpsCallable(functions, 'resetUserProtocol');
         const result: any = await resetFunc({ targetUserId });
-        // Verificăm structura exactă returnată de Cloud Function
         if (result.data && result.data.success) {
             return { success: true };
         }
-        return { success: false, error: "Server Protocol Denied" };
+        return { success: false, error: "Server Wipe Failed" };
     } catch (e: any) {
-        console.error("Firebase reset function call failed", e);
-        // Mapăm eroarea 'internal' către un mesaj mai descriptiv
-        return { success: false, error: e.message || "Internal Server Error" };
+        console.error("Initialization Error:", e);
+        return { success: false, error: e.message };
     }
 };
 
