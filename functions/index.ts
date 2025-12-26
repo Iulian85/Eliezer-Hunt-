@@ -42,17 +42,17 @@ async function validateAndCheckReplay(initData: string): Promise<boolean> {
 }
 
 /**
- * Verifică dacă amprenta trimisă corespunde celei înregistrate (Device Binding)
+ * Verifică Dual Device Binding (Fingerprint + Telegram CloudStorage UUID)
  */
-async function verifyDeviceBinding(userId: string, incomingFingerprint: string): Promise<boolean> {
+async function verifyDeviceBinding(userId: string, incomingFingerprint: string, incomingCloudId: string): Promise<boolean> {
     const userDoc = await db.collection('users').doc(userId).get();
-    if (!userDoc.exists) return true; // Prima înregistrare
+    if (!userDoc.exists) return true;
     
-    const storedFingerprint = userDoc.data()?.deviceFingerprint;
-    // Dacă utilizatorul are deja o amprentă și ea nu coincide cu cea primită -> Blocat
-    if (storedFingerprint && storedFingerprint !== incomingFingerprint) {
-        return false;
-    }
+    const data = userDoc.data()!;
+    // Verificăm ambele ID-uri pentru a neutraliza fingerprint spoofing
+    if (data.deviceFingerprint && data.deviceFingerprint !== incomingFingerprint) return false;
+    if (data.cloudStorageId && data.cloudStorageId !== incomingCloudId) return false;
+    
     return true;
 }
 
@@ -64,7 +64,7 @@ function getDistance(lat1: number, lon1: number, lat2: number, lon2: number) {
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-// AI PROXY - Acum verifică și amprenta dispozitivului
+// AI PROXY - Acum cu RATE LIMITING (Vulnerabilitate Recomandată)
 export const chatWithELZR = onCall(async (request) => {
     const { data, rawRequest } = request;
     if (!(await validateAndCheckReplay(data.initData))) {
@@ -75,23 +75,35 @@ export const chatWithELZR = onCall(async (request) => {
     const userId = userData.id?.toString();
     if (!userId) throw new HttpsError('internal', 'Invalid Identity');
 
-    // Verificare Hardware Lock
-    if (!(await verifyDeviceBinding(userId, data.fingerprint))) {
-        throw new HttpsError('permission-denied', 'SECURITY ALERT: Device Mismatch detected.');
+    // 1. Verificare Dual Hardware Lock
+    if (!(await verifyDeviceBinding(userId, data.fingerprint, data.cloudId))) {
+        throw new HttpsError('permission-denied', 'SECURITY ALERT: Device Identity Mismatch.');
     }
+
+    // 2. Rate Limiting: Max 20 mesaje pe oră
+    const userRef = db.collection('users').doc(userId);
+    const userDoc = await userRef.get();
+    const lastChatReset = userDoc.data()?.lastChatReset || 0;
+    const currentChatCount = userDoc.data()?.chatCount || 0;
+    const isNewHour = (Date.now() - lastChatReset) > 3600000;
+
+    if (!isNewHour && currentChatCount >= 20) {
+        throw new HttpsError('resource-exhausted', 'Protocol overload. Try again in 1 hour.');
+    }
+
+    await userRef.update({
+        chatCount: isNewHour ? 1 : FieldValue.increment(1),
+        lastChatReset: isNewHour ? Date.now() : lastChatReset,
+        lastActive: FieldValue.serverTimestamp()
+    });
 
     const anyRequest = rawRequest as any;
     const ip = anyRequest.headers?.['x-forwarded-for'] || anyRequest.socket?.remoteAddress;
     const country = anyRequest.headers?.['x-appengine-country'] || "Unknown";
 
-    await db.collection('users').doc(userId).set({
-        lastIp: ip,
-        lastIpCountry: country,
-        lastSecurityCheck: FieldValue.serverTimestamp()
-    }, { merge: true });
+    await userRef.update({ lastIp: ip, lastIpCountry: country });
 
-    // Initializing Gemini API according to guidelines: Always use const ai = new GoogleGenAI({apiKey: process.env.API_KEY});
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
     const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: data.messages.map((m: any) => ({ role: m.role, parts: [{ text: m.text.substring(0, 500) }] })),
@@ -101,54 +113,36 @@ export const chatWithELZR = onCall(async (request) => {
     return { text: response.text };
 });
 
-// CLAIM PROCESSOR - Validare hardware pentru fiecare colectare
+// CLAIM PROCESSOR - Validare locație și identitate duală
 export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event) => {
     const snap = event.data;
     if (!snap) return;
     const claim = snap.data();
     
-    // Verificări de Securitate de bază
     if (!(await validateAndCheckReplay(claim.initData))) {
         await snap.ref.update({ status: 'rejected', reason: 'Auth Failure' });
         return;
     }
 
-    const userRef = db.collection('users').doc(claim.userId.toString());
+    const userId = claim.userId.toString();
+    if (!(await verifyDeviceBinding(userId, claim.fingerprint, claim.cloudId))) {
+        await snap.ref.update({ status: 'rejected', reason: 'Hardware Identity Fraud detected' });
+        await db.collection('users').doc(userId).update({ isBanned: true });
+        return;
+    }
+
+    const userRef = db.collection('users').doc(userId);
     const userDoc = await userRef.get();
     if (!userDoc.exists || userDoc.data()?.isBanned) return;
     const userData = userDoc.data()!;
 
-    // Verificare Hardware Lock (Fingerprint match)
-    if (userData.deviceFingerprint && userData.deviceFingerprint !== claim.fingerprint) {
-        await snap.ref.update({ status: 'rejected', reason: 'Hardware Mismatch (Multi-Device Attempt)' });
-        await userRef.update({ isBanned: true, banReason: 'Unauthorized multi-device extraction' });
-        return;
-    }
-
-    // Corelare GPS vs IP
+    // Verificari Geospațiale
     if (userData.lastIpCountry && userData.lastIpCountry !== "Unknown" && claim.location.countryCode) {
         if (userData.lastIpCountry !== claim.location.countryCode) {
-            await snap.ref.update({ status: 'flagged', reason: 'IP/GPS Country Mismatch' });
             await userRef.update({ riskScore: FieldValue.increment(20) });
         }
     }
 
-    // Detecție Mișcare Sintetică
-    if (userData.lastLocation && userData.lastActive) {
-        const dist = getDistance(userData.lastLocation.lat, userData.lastLocation.lng, claim.location.lat, claim.location.lng);
-        const timeDiff = (Timestamp.now().toMillis() - userData.lastActive.toMillis()) / 1000;
-        
-        if (timeDiff > 0 && dist > 0) {
-            const velocity = dist / timeDiff;
-            const lastVelocity = userData.lastVelocity || 0;
-            if (Math.abs(velocity - lastVelocity) < 0.000001 && velocity > 0.5) {
-                await userRef.update({ syntheticMoveCount: FieldValue.increment(1) });
-            }
-            await userRef.update({ lastVelocity: velocity });
-        }
-    }
-
-    // Logică Recompense
     const hotspotId = claim.spawnId.split('-')[0];
     const hotspotSnap = await db.collection('hotspots').doc(hotspotId).get();
     let elzrReward = 100;
@@ -171,14 +165,13 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
             balance: FieldValue.increment(elzrReward),
             tonBalance: FieldValue.increment(tonReward),
             collectedIds: FieldValue.arrayUnion(claim.spawnId),
-            lastActive: FieldValue.serverTimestamp(),
-            lastLocation: claim.location
+            lastActive: FieldValue.serverTimestamp()
         });
         tx.update(snap.ref, { status: 'verified', finalElzr: elzrReward, finalTon: tonReward });
     });
 });
 
-// AD REWARD - Verificări hardware și limite temporale
+// AD REWARD - Validare Stateful prin Ad Sessions (Vulnerabilitate Recomandată)
 export const onAdClaimCreated = onDocumentCreated('ad_claims/{claimId}', async (event) => {
     const snap = event.data;
     if (!snap) return;
@@ -189,22 +182,37 @@ export const onAdClaimCreated = onDocumentCreated('ad_claims/{claimId}', async (
         return;
     }
 
-    const userRef = db.collection('users').doc(claim.userId.toString());
+    const userId = claim.userId.toString();
+    const userRef = db.collection('users').doc(userId);
     const userDoc = await userRef.get();
     if (!userDoc.exists || userDoc.data()?.isBanned) return;
 
-    // Verificare Hardware Lock
-    if (userDoc.data()?.deviceFingerprint && userDoc.data()?.deviceFingerprint !== claim.fingerprint) {
-        await snap.ref.delete();
+    // Verificare identitate hibridă
+    if (!(await verifyDeviceBinding(userId, claim.fingerprint, claim.cloudId))) {
+        await snap.ref.update({ status: 'rejected', reason: 'Identity Mismatch' });
         return;
     }
 
-    const authDate = parseInt(new URLSearchParams(claim.initData).get('auth_date') || '0');
-    const nowSec = Math.floor(Date.now() / 1000);
-    const duration = nowSec - authDate;
+    // STATEFUL VALIDATION: Verificăm timestamp-ul real de start înregistrat pe server
+    const sessionQuery = await db.collection('ad_sessions')
+        .where('userId', '==', parseInt(userId))
+        .where('status', '==', 'active')
+        .orderBy('startTime', 'desc')
+        .limit(1)
+        .get();
 
-    if (duration < 15 || duration > 120) {
-        await snap.ref.update({ status: 'rejected', reason: 'Invalid Watch Duration' });
+    if (sessionQuery.empty) {
+        await snap.ref.update({ status: 'rejected', reason: 'No active ad session recorded' });
+        return;
+    }
+
+    const sessionDoc = sessionQuery.docs[0];
+    const startTime = sessionDoc.data().startTime as Timestamp;
+    const elapsedSeconds = (Timestamp.now().toMillis() - startTime.toMillis()) / 1000;
+
+    // Trebuie să fi trecut cel puțin 15 secunde reali de la log-ul de start
+    if (elapsedSeconds < 15 || elapsedSeconds > 300) {
+        await snap.ref.update({ status: 'rejected', reason: 'Invalid session timing' });
         return;
     }
 
@@ -213,7 +221,7 @@ export const onAdClaimCreated = onDocumentCreated('ad_claims/{claimId}', async (
     const isNewDay = (Date.now() - lastDailyReset) > 86400000;
 
     if (!isNewDay && dailyAds >= 10) {
-        await snap.ref.update({ status: 'rejected', reason: 'Daily Ad Limit Reached' });
+        await snap.ref.update({ status: 'rejected', reason: 'Daily Cap reached' });
         return;
     }
 
@@ -224,5 +232,7 @@ export const onAdClaimCreated = onDocumentCreated('ad_claims/{claimId}', async (
         lastActive: FieldValue.serverTimestamp()
     });
 
+    // Închidem sesiunea
+    await sessionDoc.ref.update({ status: 'completed', completedAt: FieldValue.serverTimestamp() });
     await snap.ref.update({ status: 'processed' });
 });

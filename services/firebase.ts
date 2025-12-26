@@ -36,20 +36,40 @@ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 export const db = getFirestore(app);
 export const functions = getFunctions(app);
 
-// Helper intern pentru a obține amprenta curentă fără a depinde de starea React
 async function getCurrentFingerprint() {
     const fp = await FingerprintJS.load();
     const result = await fp.get();
     return result.visitorId;
 }
 
+// Helper pentru a obține UUID-ul din CloudStorage (Securitate Strat 2)
+export const getCloudStorageId = (): Promise<string> => {
+    return new Promise((resolve) => {
+        const tg = window.Telegram?.WebApp;
+        if (!tg?.CloudStorage) {
+            resolve("no_cloud_storage");
+            return;
+        }
+        tg.CloudStorage.getItem('elzr_uuid', (err, value) => {
+            if (value) {
+                resolve(value);
+            } else {
+                const newUuid = crypto.randomUUID();
+                tg.CloudStorage.setItem('elzr_uuid', newUuid, () => resolve(newUuid));
+            }
+        });
+    });
+};
+
 export const askGeminiProxy = async (messages: any[]) => {
     const fingerprint = await getCurrentFingerprint();
+    const cloudId = await getCloudStorageId();
     const chatFunc = httpsCallable(functions, 'chatWithELZR');
     const result = await chatFunc({ 
         messages, 
         initData: window.Telegram.WebApp.initData,
-        fingerprint: fingerprint // Trimitem amprenta pentru validare backend
+        fingerprint: fingerprint,
+        cloudId: cloudId
     });
     return result.data as { text: string };
 };
@@ -66,6 +86,7 @@ export const syncUserWithFirebase = async (
     userData: { id: number, username?: string, firstName?: string, lastName?: string, photoUrl?: string }, 
     localState: UserState, 
     fingerprint: string,
+    cloudId: string, // Nou ID de securitate
     initDataRaw?: string,
     currentLocation?: Coordinate
 ): Promise<UserState> => {
@@ -75,15 +96,14 @@ export const syncUserWithFirebase = async (
     try {
         const userDoc = await getDoc(userDocRef);
         if (userDoc.exists()) {
-            // OBS: Regulile firestore.rules vor permite update la lastActive DOAR prin Functions, 
-            // dar lăsăm asta aici ca fallback. Dacă update-ul e blocat de reguli, vom folosi o funcție.
             return { ...localState, ...userDoc.data() as any, telegramId: userData.id };
         } else {
             const newUserProfile: any = {
                 telegramId: userData.id,
                 username: userData.username || `Hunter_${userData.id.toString().slice(-4)}`,
                 photoUrl: userData.photoUrl || '',
-                deviceFingerprint: fingerprint, // SALVARE AMPRENTĂ INITIALĂ
+                deviceFingerprint: fingerprint,
+                cloudStorageId: cloudId, // BINDING SECUNDAR
                 lastInitData: initDataRaw,
                 lastLocation: currentLocation || null,
                 isBanned: false,
@@ -98,9 +118,22 @@ export const syncUserWithFirebase = async (
     } catch (e) { return localState; }
 };
 
+// Log-am inceputul reclamei pe server pentru a preveni timestamp spoofing (Vulnerabilitate Recomandată)
+export const logAdStartFirebase = async (tgId: number) => {
+    if (!tgId) return;
+    try {
+        await addDoc(collection(db, "ad_sessions"), {
+            userId: tgId,
+            startTime: serverTimestamp(),
+            status: "active"
+        });
+    } catch (e) {}
+};
+
 export const saveCollectionToFirebase = async (tgId: number, spawnId: string, value: number, category?: HotspotCategory, tonReward: number = 0, captureLocation?: Coordinate, challenge?: any) => {
     if (!tgId) return;
     const fingerprint = await getCurrentFingerprint();
+    const cloudId = await getCloudStorageId();
     try {
         await addDoc(collection(db, "claims"), {
             userId: tgId,
@@ -111,31 +144,34 @@ export const saveCollectionToFirebase = async (tgId: number, spawnId: string, va
             challenge: challenge || null,
             status: "pending_verification",
             initData: window.Telegram.WebApp.initData,
-            fingerprint: fingerprint // Validare hardware
+            fingerprint: fingerprint,
+            cloudId: cloudId
         });
     } catch (e) {}
 };
 
 export const requestAdRewardFirebase = async (tgId: number, rewardValue: number) => {
     const fingerprint = await getCurrentFingerprint();
+    const cloudId = await getCloudStorageId();
     await addDoc(collection(db, "ad_claims"), {
         userId: tgId,
         rewardValue,
         timestamp: serverTimestamp(),
         initData: window.Telegram.WebApp.initData,
-        fingerprint: fingerprint // Validare hardware
+        fingerprint: fingerprint,
+        cloudId: cloudId
     });
 };
 
-// Added missing processReferralReward function required by App.tsx
 export const processReferralReward = async (referrerId: string, newUserId: number, newUserName: string) => {
     try {
-        await addDoc(collection(db, "referrals"), {
+        await addDoc(collection(db, "referral_claims"), { // Actualizat conform firestore.rules
             referrerId,
             referredId: newUserId,
             referredName: newUserName,
             timestamp: serverTimestamp(),
-            status: "pending_validation"
+            status: "pending_proof_of_play",
+            initData: window.Telegram.WebApp.initData
         });
         
         await updateDoc(doc(db, "users", newUserId.toString()), {
@@ -170,13 +206,15 @@ export const updateUserWalletInFirebase = async (id: number, w: string) => updat
 export const resetUserInFirebase = async (id: number) => updateDoc(doc(db, "users", id.toString()), { balance: 0, collectedIds: [] });
 export const processWithdrawTON = async (tgId: number, amount: number) => {
     const fingerprint = await getCurrentFingerprint();
+    const cloudId = await getCloudStorageId();
     await addDoc(collection(db, "withdrawal_requests"), { 
         userId: tgId, 
         amount, 
-        status: "pending", 
+        status: "pending_review", 
         timestamp: serverTimestamp(), 
         initData: window.Telegram.WebApp.initData,
-        fingerprint: fingerprint 
+        fingerprint: fingerprint,
+        cloudId: cloudId
     });
     return true;
 };

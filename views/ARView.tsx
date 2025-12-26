@@ -7,6 +7,7 @@ import * as THREE from 'three';
 import { Coin3D } from '../components/Coin3D';
 import { SpawnPoint } from '../types';
 import { showRewardedAd } from '../services/adsgram';
+import { logAdStartFirebase } from '../services/firebase';
 import { UniversalVideoPlayer } from '../components/UniversalVideoPlayer';
 import { ADSGRAM_BLOCK_ID } from '../constants';
 
@@ -16,6 +17,7 @@ const Group = 'group' as any;
 
 interface ARViewProps {
     target: { spawn: SpawnPoint, dist: number } | null;
+    userId?: number; // Adăugat pentru logging
     onClose: () => void;
     onCollect: (points: number, tonReward?: number, challenge?: any) => void;
 }
@@ -42,7 +44,7 @@ const DriftingCoin = ({ coinRef, initialPos, onDistanceChange, onEscape, isPause
     return null;
 };
 
-export const ARView: React.FC<ARViewProps> = ({ target, onClose, onCollect }) => {
+export const ARView: React.FC<ARViewProps> = ({ target, userId, onClose, onCollect }) => {
     const videoRef = useRef<HTMLVideoElement>(null);
     const coinGroupRef = useRef<THREE.Group>(null);
     const spawnTimeRef = useRef<number>(Date.now());
@@ -68,7 +70,7 @@ export const ARView: React.FC<ARViewProps> = ({ target, onClose, onCollect }) =>
             setHasEscaped(false);
             setGbRevealed(false);
             setIsRespawning(true);
-            spawnTimeRef.current = Date.now(); // Reset entropy timer
+            spawnTimeRef.current = Date.now();
             setCoinPos(new THREE.Vector3((Math.random() - 0.5) * 5, 1.2, -7));
             setTimeout(() => setIsRespawning(false), 800);
         }
@@ -79,10 +81,7 @@ export const ARView: React.FC<ARViewProps> = ({ target, onClose, onCollect }) =>
         let stream: MediaStream | null = null;
         const startCamera = async () => {
             try {
-                stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { facingMode: 'environment', width: { ideal: 1280 } }, 
-                    audio: false 
-                });
+                stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
                 if (mounted && videoRef.current) {
                     videoRef.current.srcObject = stream;
                     videoRef.current.onloadedmetadata = () => videoRef.current?.play().then(() => setCameraActive(true));
@@ -93,7 +92,7 @@ export const ARView: React.FC<ARViewProps> = ({ target, onClose, onCollect }) =>
         return () => { mounted = false; stream?.getTracks().forEach(t => t.stop()); };
     }, []);
 
-    const playSound = (type: 'success' | 'error' | 'prize') => {
+    const playSound = (type: 'success' | 'error') => {
         try {
             const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
             const osc = ctx.createOscillator();
@@ -101,25 +100,16 @@ export const ARView: React.FC<ARViewProps> = ({ target, onClose, onCollect }) =>
             osc.connect(gain); gain.connect(ctx.destination);
             if (type === 'success') {
                 osc.frequency.setValueAtTime(800, ctx.currentTime); osc.frequency.exponentialRampToValueAtTime(1200, ctx.currentTime + 0.1);
-                gain.gain.setValueAtTime(0.2, ctx.currentTime); gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
             } else {
-                osc.type = 'sawtooth'; osc.frequency.setValueAtTime(150, ctx.currentTime); gain.gain.setValueAtTime(0.1, ctx.currentTime);
+                osc.type = 'sawtooth'; osc.frequency.setValueAtTime(150, ctx.currentTime);
             }
             osc.start(); osc.stop(ctx.currentTime + 0.5);
         } catch (e) {}
     };
 
     const triggerCollectionSuccess = (points: number, tonAmount: number) => {
-        // SECURITY: Generăm un challenge care atestă validitatea interacțiunii
-        const challenge = {
-            reactionTimeMs: Date.now() - spawnTimeRef.current,
-            finalDistance: distanceToCoin,
-            entropy: Math.random().toString(36).substring(7)
-        };
-        
-        setCollecting(true);
-        setGbRevealed(false); 
-        playSound('success');
+        const challenge = { reactionTimeMs: Date.now() - spawnTimeRef.current, entropy: Math.random().toString(36).substring(7) };
+        setCollecting(true); setGbRevealed(false); playSound('success');
         if (window.Telegram?.WebApp?.HapticFeedback) window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
         onCollect(points, tonAmount, challenge);
     };
@@ -129,28 +119,18 @@ export const ARView: React.FC<ARViewProps> = ({ target, onClose, onCollect }) =>
         if (distanceToCoin > 5.0) return;
         
         const cat = target.spawn.category;
-        
-        // SECURITY: Orice colectare sub 500ms este considerată botting și marcată pe server
         const reactionTime = Date.now() - spawnTimeRef.current;
-        if (reactionTime < 500) {
-            console.warn("Security: Premature interaction detected.");
-        }
-
-        if (cat === 'URBAN' || cat === 'MALL') {
-             triggerCollectionSuccess(Math.floor(target.spawn.value), 0);
-             return;
-        }
+        if (reactionTime < 500) return; // Anti-Bot
 
         if (cat === 'GIFTBOX' || cat === 'EVENT' || cat === 'LANDMARK') {
             setLoadingAd(true);
+            if (userId) await logAdStartFirebase(userId); // Log session real
             const success = await showRewardedAd(ADSGRAM_BLOCK_ID);
             setLoadingAd(false);
             if (success) {
                 if (cat === 'GIFTBOX') finishGiftBox();
                 else triggerCollectionSuccess(Math.floor(target.spawn.value), 0);
-            } else {
-                playSound('error');
-            }
+            } else playSound('error');
             return;
         }
 
@@ -159,50 +139,22 @@ export const ARView: React.FC<ARViewProps> = ({ target, onClose, onCollect }) =>
     };
 
     const finishGiftBox = () => {
-        const isTonWin = Math.random() < 0.15 && (target?.spawn.prizes?.length || 0) > 0; 
+        const isTonWin = Math.random() < 0.15; 
         let finalPoints = 0; let finalTon = 0;
-        if (isTonWin) {
-            finalTon = target!.spawn.prizes![Math.floor(Math.random() * target!.spawn.prizes!.length)];
-            setWonTon(finalTon);
-        } else {
-            finalPoints = [100, 250, 500][Math.floor(Math.random() * 3)];
-            setWonPoints(finalPoints);
-        }
+        if (isTonWin) { finalTon = target!.spawn.prizes![Math.floor(Math.random() * target!.spawn.prizes!.length)]; setWonTon(finalTon); }
+        else { finalPoints = [100, 250, 500][Math.floor(Math.random() * 3)]; setWonPoints(finalPoints); }
         setGbRevealed(true);
         setTimeout(() => triggerCollectionSuccess(finalPoints, finalTon), 4000);
     };
 
-    const handleEscape = () => { 
-        if (!hasEscaped && !collecting && !isRespawning && !gbRevealed) { 
-            setHasEscaped(true); playSound('error'); 
-            setTimeout(() => {
-                setIsRespawning(true);
-                setCoinPos(new THREE.Vector3((Math.random() - 0.5) * 4, 1.2, -6));
-                spawnTimeRef.current = Date.now();
-                setHasEscaped(false); setIsRespawning(false);
-            }, 2000);
-        } 
-    };
+    const handleEscape = () => { if (!hasEscaped && !collecting && !isRespawning && !gbRevealed) { setHasEscaped(true); playSound('error'); setTimeout(() => { setIsRespawning(true); setCoinPos(new THREE.Vector3((Math.random() - 0.5) * 4, 1.2, -6)); spawnTimeRef.current = Date.now(); setHasEscaped(false); setIsRespawning(false); }, 2000); } };
 
     return (
         <div className="fixed inset-0 z-[10010] bg-black overflow-hidden flex flex-col font-sans">
             <div className="absolute inset-0 z-0">
-                {!permissionError ? (
-                    <video ref={videoRef} className="w-full h-full object-cover" autoPlay playsInline muted />
-                ) : (
-                    <div className="w-full h-full bg-slate-900 flex flex-col items-center justify-center p-10 text-center text-white">
-                        <Camera size={40} className="text-red-500 mb-4" />
-                        <p className="text-sm font-black uppercase">Camera Error</p>
-                    </div>
-                )}
-                {!cameraActive && !permissionError && (
-                    <div className="absolute inset-0 bg-slate-950 flex flex-col items-center justify-center z-50">
-                        <Loader2 className="text-cyan-500 animate-spin" size={48} />
-                        <p className="text-white text-[10px] uppercase font-black tracking-widest mt-4">Initializing Lens...</p>
-                    </div>
-                )}
+                {!permissionError ? <video ref={videoRef} className="w-full h-full object-cover" autoPlay playsInline muted /> : <div className="w-full h-full bg-slate-900 flex flex-col items-center justify-center p-10 text-center text-white"><Camera size={40} className="text-red-500 mb-4" /><p className="text-sm font-black uppercase">Camera Error</p></div>}
+                {!cameraActive && !permissionError && <div className="absolute inset-0 bg-slate-950 flex flex-col items-center justify-center z-50"><Loader2 className="text-cyan-500 animate-spin" size={48} /><p className="text-white text-[10px] uppercase font-black tracking-widest mt-4">Initializing Lens...</p></div>}
             </div>
-
             <div className={`absolute inset-0 z-10 pointer-events-none transition-opacity duration-700 ${cameraActive ? 'opacity-100' : 'opacity-0'}`}>
                 <Canvas gl={{ alpha: true, antialias: true }} style={{ pointerEvents: 'auto' }}>
                     <Suspense fallback={null}>
@@ -212,29 +164,11 @@ export const ARView: React.FC<ARViewProps> = ({ target, onClose, onCollect }) =>
                         <PerspectiveCamera makeDefault position={[0, 1.6, 0]} />
                         {!isRespawning && target && (
                             <Group ref={coinGroupRef} position={coinPos}>
-                                <DriftingCoin 
-                                    coinRef={coinGroupRef} 
-                                    initialPos={coinPos} 
-                                    onDistanceChange={setDistanceToCoin} 
-                                    onEscape={handleEscape} 
-                                    isPaused={collecting || playingSponsorAd || hasEscaped || gbRevealed} 
-                                />
+                                <DriftingCoin coinRef={coinGroupRef} initialPos={coinPos} onDistanceChange={setDistanceToCoin} onEscape={handleEscape} isPaused={collecting || playingSponsorAd || hasEscaped || gbRevealed} />
                                 {!hasEscaped && (
                                     <>
-                                        <Billboard position={[0, 1.4, 0]}>
-                                            <Text fontSize={0.2} color={distanceToCoin <= 5 ? "#4ade80" : "#ffffff"} outlineWidth={0.03} outlineColor="#000000">
-                                                {distanceToCoin <= 5 ? (target.spawn.category === 'GIFTBOX' ? "OPEN" : "TAP") : `${distanceToCoin.toFixed(1)}m`}
-                                            </Text>
-                                        </Billboard>
-                                        <Coin3D 
-                                            scale={target.spawn.category === 'GIFTBOX' ? 0.45 : 0.3} 
-                                            interactive={distanceToCoin <= 5 && !collecting && !loadingAd} 
-                                            onClick={handleCoinTap} 
-                                            ghost={distanceToCoin > 5} 
-                                            collected={collecting} 
-                                            isGiftBox={target.spawn.category === 'GIFTBOX'}
-                                            logoUrl={target.spawn.logoUrl} 
-                                        />
+                                        <Billboard position={[0, 1.4, 0]}><Text fontSize={0.2} color={distanceToCoin <= 5 ? "#4ade80" : "#ffffff"} outlineWidth={0.03} outlineColor="#000000">{distanceToCoin <= 5 ? (target.spawn.category === 'GIFTBOX' ? "OPEN" : "TAP") : `${distanceToCoin.toFixed(1)}m`}</Text></Billboard>
+                                        <Coin3D scale={target.spawn.category === 'GIFTBOX' ? 0.45 : 0.3} interactive={distanceToCoin <= 5 && !collecting && !loadingAd} onClick={handleCoinTap} ghost={distanceToCoin > 5} collected={collecting} isGiftBox={target.spawn.category === 'GIFTBOX'} logoUrl={target.spawn.logoUrl} />
                                     </>
                                 )}
                             </Group>
@@ -242,60 +176,23 @@ export const ARView: React.FC<ARViewProps> = ({ target, onClose, onCollect }) =>
                     </Suspense>
                 </Canvas>
             </div>
-
             <div className="absolute inset-0 z-20 pointer-events-none flex flex-col justify-between p-6">
                 <div className="flex justify-between items-start pointer-events-auto">
-                    <div className="bg-black/40 backdrop-blur-xl px-4 py-2 rounded-xl border border-white/10">
-                        <p className="text-[8px] text-slate-400 uppercase tracking-widest font-black">Scanning Sector</p>
-                        <p className="text-white text-xs font-black flex items-center gap-2">
-                             {target?.spawn.category === 'GIFTBOX' ? <Gift size={14}/> : <Zap size={14}/>} {target?.spawn.name || "Searching..."}
-                        </p>
-                    </div>
+                    <div className="bg-black/40 backdrop-blur-xl px-4 py-2 rounded-xl border border-white/10"><p className="text-[8px] text-slate-400 uppercase tracking-widest font-black">Scanning Sector</p><p className="text-white text-xs font-black flex items-center gap-2">{target?.spawn.category === 'GIFTBOX' ? <Gift size={14}/> : <Zap size={14}/>} {target?.spawn.name || "Searching..."}</p></div>
                     <button onClick={onClose} className="bg-red-600/80 p-3 rounded-full text-white pointer-events-auto active:scale-90 shadow-xl"><X size={24} /></button>
                 </div>
-
                 {gbRevealed && (wonTon || wonPoints) && (
                     <div className="fixed inset-0 z-[10030] flex items-center justify-center p-6 bg-black/60 backdrop-blur-sm pointer-events-auto">
                         <div className="bg-slate-950 border-2 border-amber-400 p-8 rounded-[2.5rem] flex flex-col items-center gap-5 animate-in zoom-in shadow-2xl">
                             <PackageOpen className="text-amber-400 animate-bounce" size={48} />
-                            <div className="text-center">
-                                <h2 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Mystery Found</h2>
-                                <span className="text-4xl font-black text-white flex items-center gap-2">
-                                    {wonTon || wonPoints} {wonTon ? <Wallet size={24}/> : <Coins size={24}/>}
-                                </span>
-                            </div>
+                            <div className="text-center"><h2 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Mystery Found</h2><span className="text-4xl font-black text-white flex items-center gap-2">{wonTon || wonPoints} {wonTon ? <Wallet size={24}/> : <Coins size={24}/>}</span></div>
                         </div>
                     </div>
                 )}
-
-                {collecting && !gbRevealed && (
-                    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-green-500/20 backdrop-blur-xl p-8 rounded-[3rem] border border-green-500/40 flex flex-col items-center gap-4 animate-in zoom-in">
-                        <CheckCircle className="text-green-400" size={64} />
-                        <h2 className="text-2xl font-black text-white uppercase tracking-tighter">SUCCESS</h2>
-                    </div>
-                )}
-
-                <div className="flex justify-center mb-12">
-                    <div className="bg-black/60 backdrop-blur-xl px-10 py-3 rounded-full border border-white/10 pointer-events-auto">
-                        <span className="text-xs font-mono font-black text-white">{target ? distanceToCoin.toFixed(1) : "--.-"}m</span>
-                        <span className={`ml-4 text-[9px] font-black uppercase ${distanceToCoin < 6 ? 'text-green-400' : 'text-slate-500'}`}>{distanceToCoin < 6 ? "READY" : "LOCKED"}</span>
-                    </div>
-                </div>
+                <div className="flex justify-center mb-12"><div className="bg-black/60 backdrop-blur-xl px-10 py-3 rounded-full border border-white/10 pointer-events-auto"><span className="text-xs font-mono font-black text-white">{target ? distanceToCoin.toFixed(1) : "--.-"}m</span><span className={`ml-4 text-[9px] font-black uppercase ${distanceToCoin < 6 ? 'text-green-400' : 'text-slate-500'}`}>{distanceToCoin < 6 ? "READY" : "LOCKED"}</span></div></div>
             </div>
-
-            {playingSponsorAd && target?.spawn.sponsorData && (
-                <div className="fixed inset-0 z-[10020] bg-black flex flex-col pointer-events-auto">
-                    <UniversalVideoPlayer url={target!.spawn.sponsorData!.videoUrl} autoPlay={true} className="flex-1" />
-                    <button onClick={() => { setPlayingSponsorAd(false); triggerCollectionSuccess(Math.floor(target.spawn.value), 0); }} className="m-6 bg-white text-black py-4 rounded-2xl font-black uppercase tracking-widest text-xs">Claim Reward</button>
-                </div>
-            )}
-
-            {loadingAd && (
-                <div className="fixed inset-0 z-[10025] bg-black/80 backdrop-blur flex flex-col items-center justify-center gap-4 pointer-events-auto">
-                    <Loader2 className="text-cyan-400 animate-spin" size={48} />
-                    <p className="text-white font-black uppercase tracking-widest text-[10px] animate-pulse">Requesting Rewards...</p>
-                </div>
-            )}
+            {playingSponsorAd && target?.spawn.sponsorData && <div className="fixed inset-0 z-[10020] bg-black flex flex-col pointer-events-auto"><UniversalVideoPlayer url={target!.spawn.sponsorData!.videoUrl} autoPlay={true} className="flex-1" /><button onClick={() => { setPlayingSponsorAd(false); triggerCollectionSuccess(Math.floor(target.spawn.value), 0); }} className="m-6 bg-white text-black py-4 rounded-2xl font-black uppercase tracking-widest text-xs">Claim Reward</button></div>}
+            {loadingAd && <div className="fixed inset-0 z-[10025] bg-black/80 backdrop-blur flex flex-col items-center justify-center gap-4 pointer-events-auto"><Loader2 className="text-cyan-400 animate-spin" size={48} /><p className="text-white font-black uppercase tracking-widest text-[10px] animate-pulse">Syncing Protocol...</p></div>}
         </div>
     );
 }
