@@ -39,7 +39,8 @@ async function validateAndCheckReplay(initData: string): Promise<boolean> {
 }
 
 async function verifyDeviceBinding(userId: string, incomingFingerprint: string, incomingCloudId: string): Promise<boolean> {
-    const userDoc = await db.collection('users').doc(userId).get();
+    const userRef = db.collection('users').doc(userId);
+    const userDoc = await userRef.get();
     if (!userDoc.exists) return true;
     
     const data = userDoc.data()!;
@@ -100,14 +101,16 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
     if (!snap) return;
     const claim = snap.data();
     
+    // 1. Validare Replay & Auth
     if (!(await validateAndCheckReplay(claim.initData))) {
         await snap.ref.update({ status: 'rejected', reason: 'Auth Failure' });
         return;
     }
 
     const userId = claim.userId.toString();
+    // 2. Hardware Lock Check
     if (!(await verifyDeviceBinding(userId, claim.fingerprint, claim.cloudId))) {
-        await snap.ref.update({ status: 'rejected', reason: 'Hardware Identity Fraud detected' });
+        await snap.ref.update({ status: 'rejected', reason: 'Identity Fraud' });
         await db.collection('users').doc(userId).update({ isBanned: true });
         return;
     }
@@ -116,7 +119,7 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
     const userDoc = await userRef.get();
     if (!userDoc.exists || userDoc.data()?.isBanned) return;
 
-    // DETERMINARE RECOMPENSĂ & CATEGORIE
+    // 3. Procesare Recompensă
     const hotspotId = claim.spawnId.split('-')[0];
     const hotspotSnap = await db.collection('hotspots').doc(hotspotId).get();
     
@@ -127,18 +130,33 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
     if (hotspotSnap.exists) {
         const hData = hotspotSnap.data()!;
         category = hData.category;
-        elzrReward = hData.baseValue || elzrReward;
+        
+        // Dacă e GIFTBOX, acceptăm valoarea trimisă de client (pentru sincronizare UI) 
+        // dar limităm la max 1000 puncte pentru securitate.
         if (category === 'GIFTBOX') {
-            const roll = Math.random();
-            if (roll < 0.15) tonReward = hData.prizes[Math.floor(Math.random() * hData.prizes.length)];
-            else elzrReward = 400;
+            elzrReward = Math.min(elzrReward, 1000);
+            // Dacă clientul a raportat un câștig TON (tonReward > 0), validăm pe server
+            if (claim.tonReward > 0) {
+                const validPrizes = hData.prizes || [0.05, 0.5];
+                if (validPrizes.includes(claim.tonReward)) {
+                    tonReward = claim.tonReward;
+                    elzrReward = 0; // Nu dăm și puncte și TON în același timp
+                }
+            }
+        } else {
+            elzrReward = hData.baseValue || elzrReward;
         }
     }
 
+    // 4. Actualizare Atomică în Baza de Date
     await db.runTransaction(async (tx) => {
         const freshUser = await tx.get(userRef);
-        if (freshUser.data()?.collectedIds?.includes(claim.spawnId)) return;
-        
+        const collected = freshUser.data()?.collectedIds || [];
+        if (collected.includes(claim.spawnId)) {
+            tx.update(snap.ref, { status: 'rejected', reason: 'Already collected' });
+            return;
+        }
+
         const updatePayload: any = {
             balance: FieldValue.increment(elzrReward),
             tonBalance: FieldValue.increment(tonReward),
@@ -146,24 +164,31 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
             lastActive: FieldValue.serverTimestamp()
         };
 
-        // MAPARE PE SUB-BALANȚE PENTRU WALLET
+        // MAPARE PE SUB-BALANȚE PENTRU INTERFAȚĂ
         if (category === 'LANDMARK') {
             updatePayload.rareBalance = FieldValue.increment(elzrReward);
             updatePayload.rareItemsCollected = FieldValue.increment(1);
         } else if (category === 'EVENT') {
             updatePayload.eventBalance = FieldValue.increment(elzrReward);
             updatePayload.eventItemsCollected = FieldValue.increment(1);
-        } else if (category === 'MALL' || category === 'URBAN') {
-            updatePayload.gameplayBalance = FieldValue.increment(elzrReward);
         } else if (category === 'MERCHANT') {
             updatePayload.merchantBalance = FieldValue.increment(elzrReward);
             updatePayload.sponsoredAdsWatched = FieldValue.increment(1);
         } else if (category === 'AD_REWARD') {
             updatePayload.dailySupplyBalance = FieldValue.increment(elzrReward);
+        } else {
+            // GIFTBOX, URBAN, MALL merg toate în Gameplay Balance
+            updatePayload.gameplayBalance = FieldValue.increment(elzrReward);
         }
 
         tx.update(userRef, updatePayload);
-        tx.update(snap.ref, { status: 'verified', finalElzr: elzrReward, finalTon: tonReward, processedCategory: category });
+        tx.update(snap.ref, { 
+            status: 'verified', 
+            finalElzr: elzrReward, 
+            finalTon: tonReward, 
+            processedCategory: category,
+            verifiedAt: FieldValue.serverTimestamp() 
+        });
     });
 });
 
@@ -195,7 +220,7 @@ export const onAdClaimCreated = onDocumentCreated('ad_claims/{claimId}', async (
         .get();
 
     if (sessionQuery.empty) {
-        await snap.ref.update({ status: 'rejected', reason: 'No active ad session recorded' });
+        await snap.ref.update({ status: 'rejected', reason: 'No session' });
         return;
     }
 
@@ -203,27 +228,17 @@ export const onAdClaimCreated = onDocumentCreated('ad_claims/{claimId}', async (
     const startTime = sessionDoc.data().startTime as Timestamp;
     const elapsedSeconds = (Timestamp.now().toMillis() - startTime.toMillis()) / 1000;
 
-    if (elapsedSeconds < 15 || elapsedSeconds > 300) {
-        await snap.ref.update({ status: 'rejected', reason: 'Invalid session timing' });
-        return;
-    }
-
-    const dailyAds = userDoc.data()?.dailyAdsCount || 0;
-    const lastDailyReset = userDoc.data()?.lastAdsReset || 0;
-    const isNewDay = (Date.now() - lastDailyReset) > 86400000;
-
-    if (!isNewDay && dailyAds >= 10) {
-        await snap.ref.update({ status: 'rejected', reason: 'Daily Cap reached' });
+    if (elapsedSeconds < 14 || elapsedSeconds > 300) {
+        await snap.ref.update({ status: 'rejected', reason: 'Timing' });
         return;
     }
 
     const reward = claim.rewardValue || 500;
-
     await userRef.update({
         balance: FieldValue.increment(reward),
         dailySupplyBalance: FieldValue.increment(reward),
-        dailyAdsCount: isNewDay ? 1 : FieldValue.increment(1),
-        lastAdsReset: isNewDay ? Date.now() : lastDailyReset,
+        dailyAdsCount: FieldValue.increment(1),
+        lastAdsReset: Date.now(),
         lastActive: FieldValue.serverTimestamp(),
         lastDailyClaim: Date.now()
     });
