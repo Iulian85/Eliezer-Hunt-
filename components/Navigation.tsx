@@ -13,25 +13,22 @@ interface NavigationProps {
 
 export const Navigation: React.FC<NavigationProps> = ({ currentTab, onTabChange, userWalletAddress }) => {
     const navItems = [
-        { id: Tab.MAP, icon: Map, label: 'Map' },
-        { id: Tab.HUNT, icon: Crosshair, label: 'Hunt' },
-        { id: Tab.LEADERBOARD, icon: Trophy, label: 'Top' },
-        { id: Tab.ADS, icon: Megaphone, label: 'Ads' },
-        { id: Tab.FRENS, icon: Users, label: 'Frens' },
-        { id: Tab.WALLET, icon: Wallet, label: 'Wallet' },
-        { id: Tab.ADMIN, icon: ShieldCheck, label: 'Admin' }, 
+        { id: Tab.MAP, icon: Map, label: 'MAP' },
+        { id: Tab.HUNT, icon: Crosshair, label: 'EXTRACT' },
+        { id: Tab.LEADERBOARD, icon: Trophy, label: 'ELITE' },
+        { id: Tab.ADS, icon: Megaphone, label: 'INTEL' },
+        { id: Tab.FRENS, icon: Users, label: 'SQUAD' },
+        { id: Tab.WALLET, icon: Wallet, label: 'ASSETS' },
+        { id: Tab.ADMIN, icon: ShieldCheck, label: 'ROOT' }, 
     ];
 
     const visibleItems = navItems.filter(item => {
-        if (item.id === Tab.ADMIN) {
-            return userWalletAddress && userWalletAddress === ADMIN_WALLET_ADDRESS;
-        }
+        if (item.id === Tab.ADMIN) return userWalletAddress === ADMIN_WALLET_ADDRESS;
         return true;
     });
 
     const handleTabClick = (id: Tab) => {
         if (id !== currentTab) {
-            // Vibrație scurtă la schimbarea tab-ului (Native feel)
             if (window.Telegram?.WebApp?.HapticFeedback) {
                 window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
             }
@@ -40,7 +37,7 @@ export const Navigation: React.FC<NavigationProps> = ({ currentTab, onTabChange,
     };
 
     return (
-        <div className="glass-panel rounded-2xl px-2 py-2 flex justify-between items-center w-full max-w-md mx-auto shadow-[0_0_30px_rgba(0,0,0,0.8)] border-slate-700">
+        <div className="bg-slate-900/80 backdrop-blur-3xl rounded-[2rem] px-2 py-3 flex justify-between items-center w-full border border-white/10 shadow-[0_20px_50px_rgba(0,0,0,0.8)]">
             {visibleItems.map((item) => {
                 const Icon = item.icon;
                 const isActive = currentTab === item.id;
@@ -48,25 +45,25 @@ export const Navigation: React.FC<NavigationProps> = ({ currentTab, onTabChange,
                     <button
                         key={item.id}
                         onClick={() => handleTabClick(item.id)}
-                        className="flex-1 flex flex-col items-center gap-1 group relative py-1"
+                        className="flex-1 flex flex-col items-center gap-1.5 group relative py-1"
                     >
-                        {isActive && (
-                            <div className="absolute top-0 w-8 h-8 bg-cyan-500/20 rounded-full blur-md" />
-                        )}
                         <div className={clsx(
-                            "p-1.5 rounded-xl transition-all duration-300 transform",
+                            "p-2.5 rounded-2xl transition-all duration-300 transform",
                             isActive 
-                                ? "text-cyan-400 bg-cyan-900/60 border border-cyan-500/40 shadow-inner" 
-                                : "text-slate-400"
+                                ? "text-cyan-400 bg-cyan-500/10 border border-cyan-500/30 shadow-[0_0_20px_rgba(6,182,212,0.2)] scale-110" 
+                                : "text-slate-500 hover:text-slate-300"
                         )}>
-                            <Icon size={16} strokeWidth={isActive ? 2.5 : 1.5} />
+                            <Icon size={18} strokeWidth={isActive ? 2.5 : 2} />
                         </div>
                         <span className={clsx(
-                            "text-[8px] font-bold tracking-tight",
-                            isActive ? "text-cyan-400 opacity-100" : "text-slate-500"
+                            "text-[7px] font-black tracking-[0.15em] transition-opacity uppercase",
+                            isActive ? "text-cyan-400 opacity-100" : "text-slate-600 opacity-70"
                         )}>
                             {item.label}
                         </span>
+                        {isActive && (
+                            <div className="absolute -bottom-1 w-1 h-1 bg-cyan-400 rounded-full shadow-[0_0_10px_rgba(6,182,212,1)]" />
+                        )}
                     </button>
                 );
             })}
