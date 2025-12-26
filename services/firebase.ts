@@ -14,7 +14,8 @@ import {
     addDoc,
     serverTimestamp,
     increment,
-    deleteDoc
+    deleteDoc,
+    FieldValue
 } from "@firebase/firestore";
 import { getFunctions, httpsCallable } from "@firebase/functions";
 import FingerprintJS from '@fingerprintjs/fingerprintjs';
@@ -35,7 +36,6 @@ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 export const db = getFirestore(app);
 export const functions = getFunctions(app);
 
-// ACUM E EXPORTATĂ CORECT!
 export async function getCurrentFingerprint() {
     const fp = await FingerprintJS.load();
     const result = await fp.get();
@@ -225,7 +225,17 @@ export const toggleUserBiometricSetting = async (id: string, b: boolean) => upda
 export const createCampaignFirebase = async (c: any) => setDoc(doc(db, "campaigns", c.id), c);
 export const updateCampaignStatusFirebase = async (id: string, s: string) => updateDoc(doc(db, "campaigns", id), { "data.status": s });
 export const deleteCampaignFirebase = async (id: string) => deleteDoc(doc(db, "campaigns", id));
-export const updateUserWalletInFirebase = async (id: number, w: string) => updateDoc(doc(db, "users", id.toString()), { walletAddress: w });
+
+// GEMINI'S CODE – SALVARE WALLET CORECTĂ
+export const updateUserWalletInFirebase = async (id: number, w: string) => {
+    if (!id || !w) return;
+    try {
+        await updateDoc(doc(db, "users", id.toString()), { walletAddress: w });
+        console.log("Wallet salvat în Firebase:", w);
+    } catch (error) {
+        console.error("Eroare salvare wallet:", error);
+    }
+};
 
 export const resetUserInFirebase = async (targetUserId: number): Promise<{success: boolean, error?: string}> => {
     try {
@@ -234,10 +244,10 @@ export const resetUserInFirebase = async (targetUserId: number): Promise<{succes
         if (result.data && result.data.success) {
             return { success: true };
         }
-        return { success: false, error: "Server Wipe Failed" };
+        return { success: false, error: "Server Protocol Denied" };
     } catch (e: any) {
-        console.error("Initialization Error:", e);
-        return { success: false, error: e.message };
+        console.error("Firebase reset function call failed", e);
+        return { success: false, error: e.message || "Internal Server Error" };
     }
 };
 
@@ -255,4 +265,5 @@ export const processWithdrawTON = async (tgId: number, amount: number) => {
     });
     return true;
 };
+
 export const getAllUsersAdmin = async () => (await getDocs(collection(db, "users"))).docs.map(d => ({id: d.id, ...d.data()}));

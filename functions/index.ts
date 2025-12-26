@@ -86,7 +86,9 @@ export const resetUserProtocol = onCall(async (request) => {
     }
 });
 
-// Restul funcțiilor tale rămân neschimbate
+/**
+ * CHAT CU ELZR – făcut de Gemini
+ */
 export const chatWithELZR = onCall(async (request) => {
     const { data } = request;
     if (!process.env.API_KEY) throw new HttpsError('failed-precondition', 'AI Node Disconnected');
@@ -101,20 +103,55 @@ export const chatWithELZR = onCall(async (request) => {
     return { text: response.text };
 });
 
+/**
+ * PROCESARE CLAIMS – ACTUALIZARE BALANCE + CÂMPURI SPECIFICE
+ */
 export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event) => {
     const snap = event.data;
     if (!snap) return;
+    
     const claim = snap.data();
     const userRef = db.collection('users').doc(claim.userId.toString());
     
     const userDoc = await userRef.get();
     if (!userDoc.exists) return;
 
-    await userRef.update({
+    // Update-uri generale
+    const updates: any = {
         balance: FieldValue.increment(claim.claimedValue || 0),
         tonBalance: FieldValue.increment(claim.tonReward || 0),
         collectedIds: FieldValue.arrayUnion(claim.spawnId),
         lastActive: FieldValue.serverTimestamp()
-    });
+    };
+
+    // Update-uri specifice în funcție de categorie
+    switch (claim.category) {
+        case 'URBAN':
+        case 'MALL':
+            updates.gameplayBalance = FieldValue.increment(claim.claimedValue || 0);
+            break;
+        case 'LANDMARK':
+            updates.rareBalance = FieldValue.increment(claim.claimedValue || 0);
+            break;
+        case 'EVENT':
+            updates.eventBalance = FieldValue.increment(claim.claimedValue || 0);
+            break;
+        case 'MERCHANT':
+            updates.merchantBalance = FieldValue.increment(claim.claimedValue || 0);
+            break;
+        case 'DAILY':
+        case 'AD_REWARD':
+            updates.dailySupplyBalance = FieldValue.increment(claim.claimedValue || 0);
+            break;
+        case 'REFERRAL':
+            updates.referralBalance = FieldValue.increment(claim.claimedValue || 0);
+            break;
+        default:
+            // Dacă e o categorie nouă sau neașteptată, o punem în gameplay ca fallback
+            updates.gameplayBalance = FieldValue.increment(claim.claimedValue || 0);
+            break;
+    }
+
+    await userRef.update(updates);
     await snap.ref.update({ status: 'verified' });
 });
