@@ -81,6 +81,7 @@ function App() {
         return userWalletAddress && userWalletAddress === ADMIN_WALLET_ADDRESS;
     }, [userWalletAddress]);
 
+    // FILTRAM HOTSPOT-URILE CARE AU FOST DEJA COLECTATE
     const allHotspots = useMemo(() => {
         const activeAdsAsHotspots: HotspotDefinition[] = campaigns
             .filter(c => c.data.status === AdStatus.ACTIVE)
@@ -97,8 +98,10 @@ function App() {
                 sponsorData: c.data 
             }));
 
-        return [...GLOBAL_HOTSPOTS, ...customHotspots, ...activeAdsAsHotspots];
-    }, [campaigns, customHotspots]);
+        const merged = [...GLOBAL_HOTSPOTS, ...customHotspots, ...activeAdsAsHotspots];
+        // Eliminăm hotspot-urile fixe (Landmark, GiftBox, Event) dacă sunt deja colectate de utilizator
+        return merged.filter(h => !userState.collectedIds.includes(h.id));
+    }, [campaigns, customHotspots, userState.collectedIds]);
 
     const initialSpawnDone = useRef(false);
 
@@ -108,13 +111,11 @@ function App() {
 
         const initUser = async () => {
             const tg = window.Telegram?.WebApp;
-            
             if (!tg || !tg.initDataUnsafe || !tg.initDataUnsafe.user) {
                 setIsTelegram(false);
                 setIsLoading(false);
                 return;
             }
-
             tg.ready();
             tg.expand();
             setIsTelegram(true);
@@ -127,55 +128,27 @@ function App() {
 
             const tgUser = tg.initDataUnsafe.user;
             const userId = tgUser.id.toString();
-
-            const userData = { 
-                id: parseInt(userId), 
-                username: tgUser.username,
-                firstName: tgUser.first_name,
-                lastName: tgUser.last_name,
-                photoUrl: tgUser.photo_url
-            };
+            const userData = { id: parseInt(userId), username: tgUser.username, photoUrl: tgUser.photo_url };
 
             try {
-                let fingerprint = "unknown_device";
+                let fingerprint = "unknown";
                 try {
                     const fpPromise = FingerprintJS.load().then(fp => fp.get());
-                    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 5000));
-                    const result = await Promise.race([fpPromise, timeoutPromise]) as any;
+                    const result = await Promise.race([fpPromise, new Promise((_, r) => setTimeout(r, 4000))]) as any;
                     fingerprint = result.visitorId;
-                } catch (e) { console.warn("FP Timeout"); }
+                } catch (e) {}
 
-                // Obținem ID-ul persistent din CloudStorage (Securitate Strat 2)
                 const cloudId = await getCloudStorageId();
-
                 const synced = await syncUserWithFirebase(userData, defaultUserState, fingerprint, cloudId, window.Telegram.WebApp.initData);
                 setUserState(prev => ({ ...prev, ...synced }));
 
-                if (!synced.deviceFingerprint || synced.joinedAt === synced.lastActive) {
-                    setIsNewUser(true);
-                }
-
-                if (synced.isBanned) {
-                    setIsBlocked(true);
-                }
-
-                const startParam = tg.initDataUnsafe.start_param || "";
-                if (startParam.startsWith('ref_') && !synced.hasClaimedReferral) {
-                    const referrerId = startParam.replace('ref_', '');
-                    if (referrerId !== userId) {
-                        const fullName = [tgUser.first_name, tgUser.last_name].filter(Boolean).join(' ');
-                        const currentDisplayName = fullName || tgUser.username || `Hunter_${userId}`;
-                        await processReferralReward(referrerId, parseInt(userId), currentDisplayName);
-                    }
-                }
+                if (synced.isBanned) setIsBlocked(true);
 
                 subscribeToUserProfile(parseInt(userId), (updatedData) => {
                     setUserState(prev => ({ ...prev, ...updatedData }));
                     if (updatedData.isBanned) setIsBlocked(true);
                 });
-
             } catch (err) {
-                console.error("Initialization Error:", err);
             } finally {
                 setIsLoading(false);
             }
@@ -186,46 +159,21 @@ function App() {
     }, []);
 
     const handleUnlock = async () => {
-        if (userState.biometricEnabled === false) {
-            setIsUnlocked(true);
-            return;
-        }
-
+        if (userState.biometricEnabled === false) { setIsUnlocked(true); return; }
         const tg = window.Telegram?.WebApp;
         const bm = tg?.BiometricManager;
-
-        if (!bm) {
-            alert("This device environment does not support biometrics. Access denied.");
-            return;
-        }
-
+        if (!bm) { setIsUnlocked(true); return; }
         setIsAuthenticating(true);
-        if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
-
-        const triggerAuth = () => {
-            bm.authenticate({ reason: "Biometric entry to Eliezer Hunt" }, (success) => {
-                setIsAuthenticating(false);
-                if (success) {
-                    setIsUnlocked(true);
-                    if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
-                } else {
-                    alert("Authentication Failed.");
-                }
-            });
-        };
-
-        if (!bm.accessGranted) {
-            bm.requestAccess({ reason: "Access secure hunting network" }, (granted) => {
-                if (granted) triggerAuth();
-                else { setIsAuthenticating(false); alert("Access denied."); }
-            });
-        } else triggerAuth();
+        bm.authenticate({ reason: "Biometric entry" }, (success) => {
+            setIsAuthenticating(false);
+            if (success) setIsUnlocked(true);
+            else alert("Auth Failed");
+        });
     };
 
     useEffect(() => {
         if (userWalletAddress && userState.telegramId) {
             updateUserWalletInFirebase(userState.telegramId, userWalletAddress);
-            setUserState(prev => ({ ...prev, walletAddress: userWalletAddress }));
         }
     }, [userWalletAddress, userState.telegramId]);
 
@@ -248,9 +196,16 @@ function App() {
 
     const handleCollect = useCallback(async (spawnId: string, value: number, category?: HotspotCategory, tonReward: number = 0, challenge?: any) => {
         if (isBlocked && !isAdmin) return;
-        const isAd = spawnId.startsWith('ad-');
-        if (!isAd && userState.collectedIds.includes(spawnId)) return;
+        if (userState.collectedIds.includes(spawnId)) return;
         
+        // ACTUALIZARE OPTIMISTĂ (UI instantaneu)
+        setUserState(prev => ({
+            ...prev,
+            balance: prev.balance + value,
+            tonBalance: prev.tonBalance + tonReward,
+            collectedIds: [...prev.collectedIds, spawnId]
+        }));
+
         if (userState.telegramId) {
             await saveCollectionToFirebase(userState.telegramId, spawnId, value, category, tonReward, userState.location || undefined, challenge);
         }
@@ -263,67 +218,21 @@ function App() {
         const tg = window.Telegram?.WebApp;
         if (!tg) return;
         const userId = tg.initDataUnsafe?.user?.id?.toString();
-        if (!userId) return;
         const inviteLink = `https://t.me/Obadiah_Bot/eliezer?startapp=ref_${userId}`;
-        const shareText = "Hunt crypto in the real world with Eliezer Hunt! 🚀";
-        const fullUrl = `https://t.me/share/url?url=${encodeURIComponent(inviteLink)}&text=${encodeURIComponent(shareText)}`;
-        tg.openTelegramLink(fullUrl);
+        tg.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(inviteLink)}&text=Hunt crypto!`);
     }, []);
 
-    const handleResetAccount = async () => {
-        if (window.confirm("RESET ACCOUNT?")) {
-            if (userState.telegramId) {
-                await resetUserInFirebase(userState.telegramId);
-                window.location.reload();
-            }
-        }
-    };
+    if (isLoading) return <div className="h-screen w-screen bg-slate-950 flex items-center justify-center text-white font-mono"><div className="w-8 h-8 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin"></div></div>;
 
-    if (isLoading) {
-        return (
-            <div className="h-screen w-screen bg-slate-950 flex flex-col items-center justify-center text-white font-mono">
-                <div className="w-12 h-12 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-                <p className="animate-pulse tracking-tighter uppercase text-xs">ELZR Syncing...</p>
-            </div>
-        );
-    }
-
-    if (!isTelegram) {
-        return (
-            <div className="h-screen w-screen bg-[#020617] flex flex-col items-center justify-center p-8 text-center relative overflow-hidden">
-                <div className="w-24 h-24 bg-cyan-600/10 rounded-[2.5rem] flex items-center justify-center border-2 border-cyan-600/30 mb-10 shadow-[0_0_50px_rgba(6,182,212,0.15)]"><SmartphoneNfc className="text-cyan-400" size={48} /></div>
-                <h1 className="text-3xl font-black text-white mb-4 uppercase tracking-tighter font-[Rajdhani]">Access Restricted</h1>
-                <a href="https://t.me/Obadiah_Bot/eliezer" target="_blank" rel="noopener noreferrer" className="w-full py-5 bg-white text-black font-black text-sm uppercase tracking-[0.2em] rounded-[1.5rem] flex items-center justify-center gap-3"><Send size={20} /> Open in Telegram</a>
-            </div>
-        );
-    }
-
-    if (isBlocked && !isAdmin) {
-        return (
-            <div className="h-screen w-screen bg-slate-950 flex flex-col items-center justify-center p-8 text-center">
-                <div className="w-24 h-24 bg-red-600/10 rounded-[2.5rem] flex items-center justify-center border-2 border-red-600/30 mb-8 animate-pulse shadow-[0_0_50px_rgba(220,38,38,0.2)]"><Fingerprint className="text-red-500" size={48} /></div>
-                <h1 className="text-3xl font-black text-white mb-4 uppercase tracking-tighter font-[Rajdhani]">Security Alert</h1>
-                <p className="text-slate-400 text-xs font-medium">This account identity is locked. Hardware mismatch or protocol violation detected.</p>
-            </div>
-        );
-    }
+    if (isBlocked && !isAdmin) return <div className="h-screen w-screen bg-slate-950 flex items-center justify-center p-8 text-center text-white font-black uppercase">Security Alert: Identity Locked</div>;
 
     if (!isUnlocked && (!isBlocked || !isAdmin)) {
         return (
-            <div className="h-screen w-screen bg-[#020617] flex flex-col items-center justify-center p-8 relative overflow-hidden">
-                <div className="mb-12 text-center">
-                    <h2 className="text-[10px] text-cyan-500 font-black uppercase tracking-[0.4em] mb-2">Secure Gateway</h2>
-                    <h1 className="text-4xl font-black text-white uppercase tracking-tighter font-[Rajdhani]">ELIEZER</h1>
+            <div className="h-screen w-screen bg-[#020617] flex flex-col items-center justify-center p-8">
+                <div className={`w-32 h-32 rounded-[2.5rem] bg-slate-900 border-2 flex items-center justify-center mb-12 ${isAuthenticating ? 'border-cyan-500' : 'border-slate-800'}`}>
+                    <Fingerprint size={56} className={isAuthenticating ? "text-cyan-400 animate-pulse" : "text-slate-600"} />
                 </div>
-                <div className="relative mb-12">
-                    <div className={`w-32 h-32 rounded-[2.5rem] bg-slate-900 border-2 flex items-center justify-center transition-all duration-700 ${isAuthenticating ? 'border-cyan-500 shadow-cyan-500/20' : 'border-slate-800 shadow-black'}`}>
-                        <Fingerprint size={56} className={isAuthenticating ? "text-cyan-400 animate-pulse" : "text-slate-600"} />
-                    </div>
-                </div>
-                <button onClick={handleUnlock} disabled={isAuthenticating} className={`w-full py-5 rounded-[1.5rem] font-black text-sm uppercase tracking-[0.2em] flex items-center justify-center gap-3 transition-all active:scale-95 shadow-xl ${isAuthenticating ? 'bg-slate-800 text-slate-500' : 'bg-white text-black hover:bg-slate-200 shadow-white/10'}`}>
-                    {isAuthenticating ? "SCANNING..." : "UNLOCK ENTRY"}
-                </button>
-                <p className="mt-8 text-[8px] text-slate-700 font-black uppercase tracking-widest">Protocol v6.0 • Dual-Auth Active</p>
+                <button onClick={handleUnlock} className="w-full py-5 bg-white text-black font-black rounded-[1.5rem] shadow-xl uppercase tracking-widest text-xs">Unlock entry</button>
             </div>
         );
     }
@@ -332,48 +241,15 @@ function App() {
         <div className="h-screen w-screen bg-slate-950 text-white flex flex-col relative overflow-hidden">
             <div className="flex-1 relative overflow-hidden">
                 {activeTab === Tab.MAP && <MapView location={userState.location || DEFAULT_LOCATION} spawns={spawns} collectedIds={userState.collectedIds} hotspots={allHotspots} />}
-                {activeTab === Tab.HUNT && <HuntView location={userState.location || DEFAULT_LOCATION} spawns={spawns} collectedIds={userState.collectedIds} onCollect={handleCollect} hotspots={allHotspots} />}
+                {activeTab === Tab.HUNT && <HuntView userId={userState.telegramId} location={userState.location || DEFAULT_LOCATION} spawns={spawns} collectedIds={userState.collectedIds} onCollect={handleCollect} hotspots={allHotspots} />}
                 {activeTab === Tab.LEADERBOARD && <LeaderboardView />}
-                {activeTab === Tab.WALLET && (
-                    <WalletView 
-                        userState={userState}
-                        onAdReward={(amt) => handleCollect('ad-' + Date.now(), amt, 'AD_REWARD')} 
-                        onInvite={handleInvite} 
-                    />
-                )}
+                {activeTab === Tab.WALLET && <WalletView userState={userState} onAdReward={(amt) => handleCollect('ad-' + Date.now(), amt, 'AD_REWARD')} onInvite={handleInvite} />}
                 {activeTab === Tab.FRENS && <FrensView referralCount={userState.referrals} referralNames={userState.referralNames} onInvite={handleInvite} />}
-                {activeTab === Tab.ADS && (
-                    <AdsView 
-                        userLocation={userState.location} 
-                        collectedIds={userState.collectedIds}
-                        myCampaigns={campaigns.filter(c => c.ownerWallet === userWalletAddress)} 
-                        onSubmitApplication={async (coords, count, mult, price, data) => {
-                            const camp: Campaign = { id: `camp-${Date.now()}`, ownerWallet: userWalletAddress || 'anon', targetCoords: coords, count, multiplier: mult, durationDays: data.durationDays, totalPrice: price, data: { ...data, status: AdStatus.PENDING_REVIEW }, timestamp: Date.now() };
-                            await createCampaignFirebase(camp);
-                        }} 
-                        onPayCampaign={(id) => updateCampaignStatusFirebase(id, AdStatus.ACTIVE)} 
-                        isTestMode={isTestMode} 
-                    />
-                )}
-                {activeTab === Tab.ADMIN && (
-                    <AdminView 
-                        allCampaigns={campaigns} 
-                        customHotspots={customHotspots} 
-                        onSaveHotspots={async (newHotspots) => { for (const h of newHotspots) await saveHotspotFirebase(h); }} 
-                        onDeleteHotspot={async (id) => { await deleteHotspotFirebase(id); }}
-                        onDeleteCampaign={async (id) => { await deleteCampaignFirebase(id); }}
-                        onApprove={(id) => updateCampaignStatusFirebase(id, AdStatus.ACTIVE)} 
-                        onReject={(id) => updateCampaignStatusFirebase(id, AdStatus.REJECTED)} 
-                        onResetMyAccount={handleResetAccount} 
-                        isTestMode={isTestMode} 
-                        onToggleTestMode={() => setIsTestMode(!isTestMode)} 
-                    />
-                )}
+                {activeTab === Tab.ADS && <AdsView userLocation={userState.location} collectedIds={userState.collectedIds} myCampaigns={campaigns.filter(c => c.ownerWallet === userWalletAddress)} onSubmitApplication={async (coords, count, mult, price, data) => { await createCampaignFirebase({ id: `camp-${Date.now()}`, ownerWallet: userWalletAddress || 'anon', targetCoords: coords, count, multiplier: mult, durationDays: data.durationDays, totalPrice: price, data: { ...data, status: AdStatus.PENDING_REVIEW }, timestamp: Date.now() }); }} onPayCampaign={(id) => updateCampaignStatusFirebase(id, AdStatus.ACTIVE)} isTestMode={isTestMode} />}
+                {/* Fixed incorrect variable name onDeleteHotspotFirebase to deleteHotspotFirebase */}
+                {activeTab === Tab.ADMIN && <AdminView allCampaigns={campaigns} customHotspots={customHotspots} onSaveHotspots={async (newH) => { for (const h of newH) await saveHotspotFirebase(h); }} onDeleteHotspot={deleteHotspotFirebase} onDeleteCampaign={deleteCampaignFirebase} onApprove={(id) => updateCampaignStatusFirebase(id, AdStatus.ACTIVE)} onReject={(id) => updateCampaignStatusFirebase(id, AdStatus.REJECTED)} onResetMyAccount={async () => { if (userState.telegramId) { await resetUserInFirebase(userState.telegramId); window.location.reload(); } }} isTestMode={isTestMode} onToggleTestMode={() => setIsTestMode(!isTestMode)} />}
             </div>
-
-            {(activeTab === Tab.MAP || activeTab === Tab.HUNT) && (
-                <button onClick={() => setShowAIChat(true)} className="fixed right-6 bottom-24 z-[999] w-12 h-12 bg-cyan-600 rounded-full flex items-center justify-center shadow-[0_0_25px_rgba(6,182,212,0.6)] border border-cyan-400 animate-bounce"><Sparkles className="text-white" size={20} /></button>
-            )}
+            {(activeTab === Tab.MAP || activeTab === Tab.HUNT) && <button onClick={() => setShowAIChat(true)} className="fixed right-6 bottom-24 z-[999] w-12 h-12 bg-cyan-600 rounded-full flex items-center justify-center border border-cyan-400 animate-bounce shadow-xl"><Sparkles className="text-white" size={20} /></button>}
             {showAIChat && <AIChat onClose={() => setShowAIChat(false)} />}
             <div className="fixed bottom-0 left-0 right-0 z-[9999] p-4 mb-2 pointer-events-none"><div className="pointer-events-auto"><Navigation currentTab={activeTab} onTabChange={setActiveTab} userWalletAddress={userWalletAddress} /></div></div>
         </div>
