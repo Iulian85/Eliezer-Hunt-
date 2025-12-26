@@ -122,7 +122,6 @@ export const ARView: React.FC<ARViewProps> = ({ target, userId, onClose, onColle
         const reactionTime = Date.now() - spawnTimeRef.current;
         if (reactionTime < 400) return; // Anti-Spam
 
-        // 1. LOGICĂ ADSGRAM (Monezi rare, cadouri, evenimente globale)
         if (cat === 'GIFTBOX' || cat === 'EVENT' || cat === 'LANDMARK') {
             setLoadingAd(true);
             if (userId) await logAdStartFirebase(userId); 
@@ -137,7 +136,6 @@ export const ARView: React.FC<ARViewProps> = ({ target, userId, onClose, onColle
             return;
         }
 
-        // 2. LOGICĂ MERCHANT (Monezi plătite de afaceri locale - NU arătăm Adsgram!)
         if (cat === 'MERCHANT') {
             if (target.spawn.sponsorData?.videoUrl) {
                 setPlayingSponsorAd(true);
@@ -147,7 +145,6 @@ export const ARView: React.FC<ARViewProps> = ({ target, userId, onClose, onColle
             return;
         }
 
-        // 3. LOGICĂ STANDARD (Gameplay Coins)
         triggerCollectionSuccess(Math.floor(target.spawn.value), 0);
     };
 
@@ -181,7 +178,17 @@ export const ARView: React.FC<ARViewProps> = ({ target, userId, onClose, onColle
                                 {!hasEscaped && (
                                     <>
                                         <Billboard position={[0, 1.4, 0]}><Text fontSize={0.2} color={distanceToCoin <= 5 ? "#4ade80" : "#ffffff"} outlineWidth={0.03} outlineColor="#000000">{distanceToCoin <= 5 ? (target.spawn.category === 'GIFTBOX' ? "OPEN" : "TAP") : `${distanceToCoin.toFixed(1)}m`}</Text></Billboard>
-                                        <Coin3D scale={target.spawn.category === 'GIFTBOX' ? 0.45 : 0.3} interactive={distanceToCoin <= 5 && !collecting && !loadingAd} onClick={handleCoinTap} ghost={distanceToCoin > 5} collected={collecting} isGiftBox={target.spawn.category === 'GIFTBOX'} logoUrl={target.spawn.logoUrl} />
+                                        <Coin3D 
+                                            scale={target.spawn.category === 'GIFTBOX' ? 0.45 : 0.3} 
+                                            interactive={distanceToCoin <= 5 && !collecting && !loadingAd} 
+                                            onClick={handleCoinTap} 
+                                            ghost={distanceToCoin > 5} 
+                                            collected={collecting} 
+                                            isGiftBox={target.spawn.category === 'GIFTBOX'} 
+                                            isSponsored={target.spawn.category === 'MERCHANT'}
+                                            customText={target.spawn.customText}
+                                            logoUrl={target.spawn.logoUrl} 
+                                        />
                                     </>
                                 )}
                             </Group>

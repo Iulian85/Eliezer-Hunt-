@@ -5,6 +5,7 @@ import L from 'leaflet';
 import { Coordinate, SpawnPoint, HotspotCategory, HotspotDefinition } from '../types';
 import { generateProceduralSpawns } from '../utils';
 
+// Added interface for MapView props
 interface MapViewProps {
     location: Coordinate;
     spawns: SpawnPoint[];
@@ -36,9 +37,13 @@ const createStyledIcon = (category: HotspotCategory | undefined, densityValue: n
         bgColor = "bg-cyan-500/20";
         iconContent = "🏙️";
         badgeText = densityValue >= 1000 ? `${(densityValue / 1000).toFixed(0)}k` : `${densityValue}`;
+    } else if (category === 'MERCHANT') {
+        ringColor = "border-red-600 shadow-[0_0_15px_rgba(220,38,38,0.7)]";
+        bgColor = "bg-red-600/20";
+        iconContent = "📣";
+        badgeText = "AD";
     }
 
-    // Dacă avem un logoUrl valid, îl folosim în loc de iconița text (emoji)
     const innerHtml = logoUrl 
         ? `<img src="${logoUrl}" class="w-8 h-8 object-contain rounded-full" onerror="this.style.display='none'" />` 
         : `<span class="text-2xl">${iconContent}</span>`;
@@ -104,7 +109,7 @@ export const MapView: React.FC<MapViewProps> = ({ location, spawns, collectedIds
 
                 {visibleSpawns.map(s => {
                     const isMainHotspot = s.id.includes('main');
-                    const isSpecial = s.category === 'EVENT' || s.category === 'LANDMARK';
+                    const isSpecial = s.category === 'EVENT' || s.category === 'LANDMARK' || s.category === 'MERCHANT';
                     
                     return (
                         <Marker 
