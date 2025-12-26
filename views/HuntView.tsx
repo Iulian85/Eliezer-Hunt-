@@ -1,18 +1,20 @@
-
 import React, { useState, useEffect, useMemo } from 'react';
-import { Coordinate, SpawnPoint, HotspotDefinition, HotspotCategory } from '../types';
+import { Canvas } from '@react-three/fiber';
+import { Coordinate, SpawnPoint, HotspotDefinition } from '../types';
 import { getDistance } from '../utils';
 import { MAX_INTERACTION_DISTANCE, NEARBY_SEARCH_RADIUS } from '../constants';
+import { Coin3D } from '../components/Coin3D';
 import { LocateFixed, Navigation, Rocket, Crown, Gift, Megaphone } from 'lucide-react';
 import { ARView } from './ARView';
+
+const AmbientLight = 'ambientLight' as any;
 
 interface HuntViewProps {
     location: Coordinate;
     spawns: SpawnPoint[];
     collectedIds: string[];
-    onCollect: (id: string, value: number, category?: HotspotCategory, tonReward?: number) => void;
+    onCollect: (id: string, value: number, category?: any) => void;
     hotspots: HotspotDefinition[];
-    userId?: number;
 }
 
 export const HuntView: React.FC<HuntViewProps> = ({ location, spawns, collectedIds, onCollect, hotspots }) => {
@@ -31,8 +33,7 @@ export const HuntView: React.FC<HuntViewProps> = ({ location, spawns, collectedI
             isLandmark: h.category === 'EVENT' || h.category === 'LANDMARK',
             logoUrl: h.logoUrl,
             customText: h.customText,
-            sponsorData: (h as any).sponsorData,
-            prizes: h.prizes
+            sponsorData: (h as any).sponsorData
         }));
 
         return [...spawns, ...hotspotSpawns];
@@ -45,6 +46,7 @@ export const HuntView: React.FC<HuntViewProps> = ({ location, spawns, collectedI
         allAvailableTargets.forEach(target => {
             if (collectedIds.includes(target.id)) return;
             const d = getDistance(location, target.coords);
+            
             if (d < minDesc && d < NEARBY_SEARCH_RADIUS) {
                 minDesc = d;
                 closest = target;
@@ -53,26 +55,30 @@ export const HuntView: React.FC<HuntViewProps> = ({ location, spawns, collectedI
 
         if (closest) {
             setNearestSpawn({ spawn: closest, dist: minDesc });
-        } else if (!arMode) {
-            setNearestSpawn(null);
+        } else {
+            // Keep the previous one if in AR mode to prevent component flicker and premature exit
+            if (!arMode) setNearestSpawn(null);
         }
     }, [location, allAvailableTargets, collectedIds, arMode]);
 
     const handleARCollect = (points: number, tonReward: number = 0) => {
         if (nearestSpawn) {
-            // Trimitem ID-ul corect si recompensa inapoi la App.tsx
-            onCollect(nearestSpawn.spawn.id, points, nearestSpawn.spawn.category, tonReward);
-            // NU inchidem modul AR, asteptam ca useEffect-ul de mai sus sa gaseasca urmatoarea tinta
+            onCollect(nearestSpawn.spawn.id, points, nearestSpawn.spawn.category);
+            // We DO NOT call setArMode(false) here so the user stays in AR.
+            // The useEffect above will automatically pick the next nearest spawn
+            // once the current one is added to collectedIds.
         }
     };
 
     const handleStandardCollect = () => {
          if (nearestSpawn) {
-            onCollect(nearestSpawn.spawn.id, Math.floor(nearestSpawn.spawn.value), nearestSpawn.spawn.category, 0);
+            onCollect(nearestSpawn.spawn.id, Math.floor(nearestSpawn.spawn.value), nearestSpawn.spawn.category);
             setNearestSpawn(null);
         }
     };
 
+    // If arMode is active, we return the ARView. 
+    // This component will stay mounted as long as arMode is true.
     if (arMode) {
         return <ARView target={nearestSpawn} onClose={() => setArMode(false)} onCollect={handleARCollect} />;
     }
@@ -173,6 +179,18 @@ export const HuntView: React.FC<HuntViewProps> = ({ location, spawns, collectedI
                     </p>
                 </div>
             )}
+            
+            <div className="absolute inset-0 z-0 opacity-10 pointer-events-none">
+                 <Canvas>
+                    <AmbientLight intensity={1} />
+                    <Coin3D 
+                        customText={nearestSpawn?.spawn.customText} 
+                        isEvent={nearestSpawn?.spawn.category === 'EVENT'}
+                        logoUrl={nearestSpawn?.spawn.logoUrl}
+                        isSponsored={nearestSpawn?.spawn.category === 'MERCHANT'}
+                    />
+                 </Canvas>
+            </div>
         </div>
     );
 };
