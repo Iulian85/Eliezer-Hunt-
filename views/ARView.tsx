@@ -17,7 +17,7 @@ const Group = 'group' as any;
 
 interface ARViewProps {
     target: { spawn: SpawnPoint, dist: number } | null;
-    userId?: number; // Adăugat pentru logging
+    userId?: number;
     onClose: () => void;
     onCollect: (points: number, tonReward?: number, challenge?: any) => void;
 }
@@ -120,21 +120,34 @@ export const ARView: React.FC<ARViewProps> = ({ target, userId, onClose, onColle
         
         const cat = target.spawn.category;
         const reactionTime = Date.now() - spawnTimeRef.current;
-        if (reactionTime < 500) return; // Anti-Bot
+        if (reactionTime < 400) return; // Anti-Spam
 
+        // 1. LOGICĂ ADSGRAM (Monezi rare, cadouri, evenimente globale)
         if (cat === 'GIFTBOX' || cat === 'EVENT' || cat === 'LANDMARK') {
             setLoadingAd(true);
-            if (userId) await logAdStartFirebase(userId); // Log session real
+            if (userId) await logAdStartFirebase(userId); 
             const success = await showRewardedAd(ADSGRAM_BLOCK_ID);
             setLoadingAd(false);
             if (success) {
                 if (cat === 'GIFTBOX') finishGiftBox();
                 else triggerCollectionSuccess(Math.floor(target.spawn.value), 0);
-            } else playSound('error');
+            } else {
+                playSound('error');
+            }
             return;
         }
 
-        if (target.spawn.sponsorData) { setPlayingSponsorAd(true); return; }
+        // 2. LOGICĂ MERCHANT (Monezi plătite de afaceri locale - NU arătăm Adsgram!)
+        if (cat === 'MERCHANT') {
+            if (target.spawn.sponsorData?.videoUrl) {
+                setPlayingSponsorAd(true);
+            } else {
+                triggerCollectionSuccess(Math.floor(target.spawn.value), 0);
+            }
+            return;
+        }
+
+        // 3. LOGICĂ STANDARD (Gameplay Coins)
         triggerCollectionSuccess(Math.floor(target.spawn.value), 0);
     };
 

@@ -116,7 +116,7 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
     const userDoc = await userRef.get();
     if (!userDoc.exists || userDoc.data()?.isBanned) return;
 
-    // Logică Recompense & Mapare Categorii (Vulnerabilitate REZOLVATĂ)
+    // DETERMINARE RECOMPENSĂ & CATEGORIE
     const hotspotId = claim.spawnId.split('-')[0];
     const hotspotSnap = await db.collection('hotspots').doc(hotspotId).get();
     
@@ -139,7 +139,6 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
         const freshUser = await tx.get(userRef);
         if (freshUser.data()?.collectedIds?.includes(claim.spawnId)) return;
         
-        // Creăm obiectul de update pentru balanțe
         const updatePayload: any = {
             balance: FieldValue.increment(elzrReward),
             tonBalance: FieldValue.increment(tonReward),
@@ -147,15 +146,18 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
             lastActive: FieldValue.serverTimestamp()
         };
 
-        // MAPARE PUNCTE PE CATEGORII SPECIFICE (Pentru sectiunea Airdrop Estimation)
+        // MAPARE PE SUB-BALANȚE PENTRU WALLET
         if (category === 'LANDMARK') {
             updatePayload.rareBalance = FieldValue.increment(elzrReward);
+            updatePayload.rareItemsCollected = FieldValue.increment(1);
         } else if (category === 'EVENT') {
             updatePayload.eventBalance = FieldValue.increment(elzrReward);
+            updatePayload.eventItemsCollected = FieldValue.increment(1);
         } else if (category === 'MALL' || category === 'URBAN') {
             updatePayload.gameplayBalance = FieldValue.increment(elzrReward);
         } else if (category === 'MERCHANT') {
             updatePayload.merchantBalance = FieldValue.increment(elzrReward);
+            updatePayload.sponsoredAdsWatched = FieldValue.increment(1);
         } else if (category === 'AD_REWARD') {
             updatePayload.dailySupplyBalance = FieldValue.increment(elzrReward);
         }
@@ -219,7 +221,7 @@ export const onAdClaimCreated = onDocumentCreated('ad_claims/{claimId}', async (
 
     await userRef.update({
         balance: FieldValue.increment(reward),
-        dailySupplyBalance: FieldValue.increment(reward), // PUNCTELE DE AD DIN WALLET MERG AICI
+        dailySupplyBalance: FieldValue.increment(reward),
         dailyAdsCount: isNewDay ? 1 : FieldValue.increment(1),
         lastAdsReset: isNewDay ? Date.now() : lastDailyReset,
         lastActive: FieldValue.serverTimestamp(),
