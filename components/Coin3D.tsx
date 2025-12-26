@@ -24,246 +24,95 @@ interface Coin3DProps {
     isGiftBox?: boolean;
 }
 
-const FloatingStar = ({ position, color, speed }: { position: [number, number, number], color: string, speed: number, key?: React.Key }) => {
-    const starRef = useRef<THREE.Mesh>(null);
-    useFrame((state) => {
-        if (starRef.current) {
-            starRef.current.rotation.y += 0.02;
-            starRef.current.rotation.x += 0.01;
-            starRef.current.position.y += Math.sin(state.clock.elapsedTime * speed) * 0.005;
-        }
-    });
-
-    return (
-        <Octahedron ref={starRef} args={[0.2, 0]} position={position}>
-            <MeshStandardMaterial 
-                color={color} 
-                emissive={color} 
-                emissiveIntensity={1.5} 
-                metalness={1} 
-                roughness={0} 
-            />
-        </Octahedron>
-    );
-};
-
 const GiftBoxModel = ({ collected }: { collected: boolean }) => {
     const boxColor = "#fbbf24"; 
     const ribbonColor = "#ef4444"; 
-    const starPositions: { pos: [number, number, number], color: string, speed: number }[] = [
-        { pos: [2.5, 1, 1], color: "#22d3ee", speed: 1.2 },  
-        { pos: [-2.2, 1.5, -1], color: "#f472b6", speed: 1.5 }, 
-        { pos: [1.5, 2.5, -2], color: "#fbbf24", speed: 0.8 }, 
-        { pos: [-2.5, -1, 2], color: "#4ade80", speed: 2.0 },  
-        { pos: [0, 3, 1], color: "#ffffff", speed: 1.1 },    
-    ];
-
     return (
         <Group>
-            <Box args={[2, 2, 2]}>
-                <MeshStandardMaterial color={boxColor} metalness={0.1} roughness={0.4} />
-            </Box>
-            <Box args={[2.2, 0.6, 2.2]} position={[0, 0.9, 0]}>
-                <MeshStandardMaterial color={boxColor} metalness={0.1} roughness={0.4} />
-            </Box>
-            <Box args={[2.22, 0.5, 0.5]} position={[0, 0, 0]}>
-                <MeshStandardMaterial color={ribbonColor} metalness={0.5} roughness={0.2} />
-            </Box>
-            <Box args={[0.5, 2.22, 0.5]} position={[0, 0, 0]}>
-                <MeshStandardMaterial color={ribbonColor} metalness={0.5} roughness={0.2} />
-            </Box>
-            <Box args={[2.25, 0.1, 0.5]} position={[0, 1.2, 0]}>
-                <MeshStandardMaterial color={ribbonColor} metalness={0.5} roughness={0.2} />
-            </Box>
-            <Box args={[0.5, 0.1, 2.25]} position={[0, 1.2, 0]}>
-                <MeshStandardMaterial color={ribbonColor} metalness={0.5} roughness={0.2} />
-            </Box>
-            <Group position={[0, 1.4, 0]} rotation={[0, 0.7, 0]}>
-                <Group rotation={[0, 0, 0.5]}>
-                    <Cylinder args={[0.4, 0.4, 0.15, 16]} rotation={[Math.PI / 2, 0, 0]} position={[0.4, 0, 0]}>
-                        <MeshStandardMaterial color={ribbonColor} metalness={0.3} roughness={0.5} />
-                    </Cylinder>
-                </Group>
-                <Group rotation={[0, 0, -0.5]}>
-                    <Cylinder args={[0.4, 0.4, 0.15, 16]} rotation={[Math.PI / 2, 0, 0]} position={[-0.4, 0, 0]}>
-                        <MeshStandardMaterial color={ribbonColor} metalness={0.3} roughness={0.5} />
-                    </Cylinder>
-                </Group>
-                <Box args={[0.4, 0.4, 0.4]} position={[0, -0.1, 0]}>
-                    <MeshStandardMaterial color={ribbonColor} metalness={0.4} roughness={0.3} />
-                </Box>
-            </Group>
-            {!collected && starPositions.map((star, idx) => (
-                <FloatingStar key={idx} position={star.pos} color={star.color} speed={star.speed} />
-            ))}
+            <Box args={[2, 2, 2]}><MeshStandardMaterial color={boxColor} metalness={0.1} roughness={0.4} /></Box>
+            <Box args={[2.2, 0.6, 2.2]} position={[0, 0.9, 0]}><MeshStandardMaterial color={boxColor} metalness={0.1} roughness={0.4} /></Box>
+            <Box args={[2.22, 0.5, 0.5]} position={[0, 0, 0]}><MeshStandardMaterial color={ribbonColor} metalness={0.5} roughness={0.2} /></Box>
+            <Box args={[0.5, 2.22, 0.5]} position={[0, 0, 0]}><MeshStandardMaterial color={ribbonColor} metalness={0.5} roughness={0.2} /></Box>
         </Group>
     );
 };
 
 export const Coin3D: React.FC<Coin3DProps> = ({
-    onClick,
-    interactive = false,
-    scale = 1,
-    ghost = false,
-    collected = false,
-    isSponsored = false,
-    isMoving = true,
-    isEvent = false,
-    customText,
-    logoUrl,
-    isGiftBox = false
+    onClick, interactive = false, scale = 1, ghost = false, collected = false,
+    isSponsored = false, isMoving = true, isEvent = false, customText, logoUrl, isGiftBox = false
 }) => {
     const groupRef = useRef<THREE.Group>(null);
-    const [hovered, setHovered] = useState(false);
-
+    
     const texture = useMemo(() => {
         if (!logoUrl) return null;
-        try {
-            const loader = new THREE.TextureLoader();
-            loader.setCrossOrigin('anonymous'); 
-            const tex = loader.load(logoUrl);
-            tex.colorSpace = THREE.SRGBColorSpace;
-            tex.minFilter = THREE.LinearFilter;
-            return tex;
-        } catch (e) {
-            return null;
-        }
+        const loader = new THREE.TextureLoader();
+        loader.setCrossOrigin('anonymous'); 
+        const tex = loader.load(logoUrl);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        return tex;
     }, [logoUrl]);
-
-    const dots = useMemo(() => {
-        const items = [];
-        const radius = 1.5;
-        const count = 16;
-        for (let i = 0; i < count; i++) {
-            const angle = (i / count) * Math.PI * 2;
-            items.push({ x: Math.cos(angle) * radius, y: Math.sin(angle) * radius });
-        }
-        return items;
-    }, []);
 
     useFrame((state, delta) => {
         if (!groupRef.current) return;
         if (collected) {
             groupRef.current.rotation.y += 0.8;
-            groupRef.current.rotation.z += 0.5;
             groupRef.current.position.y += 2 * delta;
             groupRef.current.scale.lerp(new THREE.Vector3(0, 0, 0), 0.1);
         } else {
             const targetScaleVector = new THREE.Vector3(scale, scale, scale);
             groupRef.current.scale.lerp(targetScaleVector, delta * 5);
-            
-            if (isGiftBox) {
-                groupRef.current.rotation.y += 0.4 * delta;
-                groupRef.current.rotation.z = Math.sin(state.clock.elapsedTime * 1.5) * 0.15;
-                groupRef.current.rotation.x = Math.cos(state.clock.elapsedTime * 1.2) * 0.15;
-            } else {
-                groupRef.current.rotation.y += 0.05;
-                if (isMoving) groupRef.current.rotation.x = Math.sin(state.clock.elapsedTime * 3) * 0.2;
-            }
+            groupRef.current.rotation.y += 0.04;
+            if (isMoving && !isGiftBox) groupRef.current.rotation.x = Math.sin(state.clock.elapsedTime * 2) * 0.1;
         }
     });
 
-    const handleClick = (e: any) => {
-        if (interactive && !collected && !ghost) {
-            e.stopPropagation();
-            if (onClick) onClick();
-        }
-    };
-
     const primaryColor = isEvent ? "#166534" : (isSponsored ? "#EF4444" : "#FFD700");
     const secondaryColor = isEvent ? "#991B1B" : (isSponsored ? "#7F1D1D" : "#F59E0B");
-    const sparkleColor = isGiftBox ? "#ffffff" : (isEvent ? "#ffffff" : (isSponsored ? "#EF4444" : "#FFF700"));
-
-    const mainMaterial = useMemo(() => new THREE.MeshStandardMaterial({
-        color: primaryColor, metalness: 0.9, roughness: 0.1, emissive: secondaryColor, emissiveIntensity: 0.6,
-    }), [primaryColor, secondaryColor]);
-
-    const faceMaterial = useMemo(() => new THREE.MeshStandardMaterial({
-        color: secondaryColor, metalness: 0.8, roughness: 0.3,
-    }), [secondaryColor]);
-
     const displayText = customText || (isSponsored ? "AD" : (isEvent ? "XMAS" : "ELZR"));
 
     return (
-        <Group ref={groupRef} onClick={handleClick}
-            onPointerOver={() => interactive && !ghost && setHovered(true)}
-            onPointerOut={() => interactive && !ghost && setHovered(false)}
-        >
-            {(isMoving || isGiftBox) && !collected && !ghost && (
-                 <Sparkles 
-                    count={isGiftBox ? 150 : 50} 
-                    scale={isGiftBox ? 6 : 4} 
-                    size={isGiftBox ? 30 : 15} 
-                    speed={isGiftBox ? 4 : 2} 
-                    opacity={1} 
-                    color={sparkleColor} 
-                    noise={0.5} 
-                />
-            )}
-
-            <Float 
-                speed={isGiftBox ? 6 : 5} 
-                rotationIntensity={isGiftBox ? 2 : 0.5} 
-                floatIntensity={isGiftBox ? 2 : 0.5} 
-                enabled={!collected}
-            >
+        <Group ref={groupRef} onClick={(e: any) => { e.stopPropagation(); if (interactive && !collected && !ghost && onClick) onClick(); }}>
+            {!collected && !ghost && <Sparkles count={isGiftBox ? 100 : 40} scale={isGiftBox ? 5 : 3} size={20} speed={2} color={primaryColor} />}
+            
+            <Float speed={2} rotationIntensity={0.5} floatIntensity={0.5} enabled={!collected}>
                 {isGiftBox ? (
                     <GiftBoxModel collected={collected} />
                 ) : (
                     <>
+                        {/* Corpul monedei */}
                         <Cylinder args={[2, 2, 0.25, 32]} rotation={[Math.PI / 2, 0, 0]}>
-                            <Primitive object={mainMaterial} attach="material" />
+                            <MeshStandardMaterial color={primaryColor} metalness={0.9} roughness={0.1} emissive={secondaryColor} emissiveIntensity={0.4} />
                         </Cylinder>
-                        <Cylinder args={[1.7, 1.7, 0.26, 32]} rotation={[Math.PI / 2, 0, 0]} position={[0, 0, 0]}>
-                            <Primitive object={faceMaterial} attach="material" />
-                        </Cylinder>
-
-                        {!ghost && dots.map((dot, i) => (
-                            <Group key={i}>
-                                <Mesh position={[dot.x, dot.y, 0.14]}>
-                                    <SphereGeometry args={[0.08, 8, 8]} />
-                                    <MeshStandardMaterial color={isEvent ? "#ef4444" : "#FFFFE0"} emissive={isEvent ? "#ef4444" : "#FFFFFF"} emissiveIntensity={1} />
-                                </Mesh>
-                                <Mesh position={[dot.x, dot.y, -0.14]}>
-                                    <SphereGeometry args={[0.08, 8, 8]} />
-                                    <MeshStandardMaterial color={isEvent ? "#ef4444" : "#FFFFE0"} emissive={isEvent ? "#ef4444" : "#FFFFFF"} emissiveIntensity={1} />
-                                </Mesh>
-                            </Group>
-                        ))}
-
-                        {/* TEXTUL ESTE ACUM POZIȚIONAT FIX (LIPIT) PE MONEDĂ, FĂRĂ BILLBOARD */}
+                        
+                        {/* Textul FATA (lipit) */}
                         <Text 
-                            position={[0, 0, 0.14]} 
-                            fontSize={displayText.length > 5 ? 0.7 : 0.9} 
-                            anchorX="center" 
-                            anchorY="middle" 
-                            outlineWidth={0.04} 
-                            outlineColor="#000000"
+                            position={[0, 0, 0.13]} 
+                            fontSize={displayText.length > 4 ? 0.6 : 0.8} 
+                            anchorX="center" anchorY="middle" 
+                            outlineWidth={0.04} outlineColor="#000000"
                             font="https://fonts.gstatic.com/s/rajdhani/v15/L7rgdfpPBq9hS5p9p76p.woff"
                         >
                             {displayText}
-                            <MeshStandardMaterial color={(isEvent || isSponsored) ? "#ffffff" : "#FFD700"} emissive={(isEvent || isSponsored) ? "#ffffff" : "#FFD700"} emissiveIntensity={0.2} />
+                            <MeshStandardMaterial color="#ffffff" emissive="#ffffff" emissiveIntensity={0.5} />
                         </Text>
 
-                        {texture ? (
-                            <Mesh position={[0, 0, -0.14]} rotation={[0, Math.PI, 0]}>
-                                <Circle args={[1.6, 32]}>
-                                    <MeshStandardMaterial map={texture} transparent={true} side={THREE.DoubleSide} emissive="#ffffff" emissiveIntensity={0.2} />
-                                </Circle>
+                        {/* Textul SPATE (lipit) */}
+                        <Text 
+                            position={[0, 0, -0.13]} 
+                            rotation={[0, Math.PI, 0]}
+                            fontSize={displayText.length > 4 ? 0.6 : 0.8} 
+                            anchorX="center" anchorY="middle" 
+                            outlineWidth={0.04} outlineColor="#000000"
+                            font="https://fonts.gstatic.com/s/rajdhani/v15/L7rgdfpPBq9hS5p9p76p.woff"
+                        >
+                            {displayText}
+                            <MeshStandardMaterial color="#ffffff" emissive="#ffffff" emissiveIntensity={0.5} />
+                        </Text>
+
+                        {texture && (
+                            <Mesh position={[0, 0, 0.135]}>
+                                <Circle args={[1.2, 32]}><MeshStandardMaterial map={texture} transparent={true} /></Circle>
                             </Mesh>
-                        ) : (
-                            <Text 
-                                position={[0, 0, -0.14]} 
-                                rotation={[0, Math.PI, 0]} 
-                                fontSize={1.8} 
-                                anchorX="center" 
-                                anchorY="middle" 
-                                outlineWidth={0.04} 
-                                outlineColor="#2a1a00"
-                            >
-                                {isEvent ? "🎄" : (isSponsored ? "📣" : "$")}
-                                <MeshStandardMaterial color={primaryColor} />
-                            </Text>
                         )}
                     </>
                 )}
