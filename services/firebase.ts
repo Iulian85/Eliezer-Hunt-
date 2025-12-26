@@ -1,3 +1,4 @@
+
 import { initializeApp, getApps, getApp } from "@firebase/app";
 import { 
     getFirestore, 
@@ -14,8 +15,7 @@ import {
     addDoc,
     serverTimestamp,
     increment,
-    deleteDoc,
-    FieldValue
+    deleteDoc
 } from "@firebase/firestore";
 import { getFunctions, httpsCallable } from "@firebase/functions";
 import FingerprintJS from '@fingerprintjs/fingerprintjs';
@@ -111,7 +111,12 @@ export const syncUserWithFirebase = async (
     try {
         const userDoc = await getDoc(userDocRef);
         if (userDoc.exists()) {
-            return sanitizeUserData(userDoc.data(), localState);
+            // Asigurăm sincronizarea UUID-ului dacă acesta lipsește sau s-a schimbat
+            const existingData = userDoc.data();
+            if (existingData.cloudStorageId !== cloudId) {
+                await updateDoc(userDocRef, { cloudStorageId: cloudId, deviceFingerprint: fingerprint });
+            }
+            return sanitizeUserData({ ...existingData, cloudStorageId: cloudId }, localState);
         } else {
             const newUserProfile: any = {
                 telegramId: userData.id,
@@ -174,6 +179,7 @@ export const saveCollectionToFirebase = async (tgId: number, spawnId: string, va
 };
 
 export const requestAdRewardFirebase = async (tgId: number, rewardValue: number) => {
+    if (!tgId) return;
     const fingerprint = await getCurrentFingerprint();
     const cloudId = await getCloudStorageId();
     await addDoc(collection(db, "ad_claims"), {
@@ -182,7 +188,8 @@ export const requestAdRewardFirebase = async (tgId: number, rewardValue: number)
         timestamp: serverTimestamp(),
         initData: window.Telegram.WebApp.initData,
         fingerprint: fingerprint,
-        cloudId: cloudId
+        cloudId: cloudId,
+        status: "pending"
     });
 };
 
@@ -226,12 +233,10 @@ export const createCampaignFirebase = async (c: any) => setDoc(doc(db, "campaign
 export const updateCampaignStatusFirebase = async (id: string, s: string) => updateDoc(doc(db, "campaigns", id), { "data.status": s });
 export const deleteCampaignFirebase = async (id: string) => deleteDoc(doc(db, "campaigns", id));
 
-// GEMINI'S CODE – SALVARE WALLET CORECTĂ
 export const updateUserWalletInFirebase = async (id: number, w: string) => {
     if (!id || !w) return;
     try {
         await updateDoc(doc(db, "users", id.toString()), { walletAddress: w });
-        console.log("Wallet salvat în Firebase:", w);
     } catch (error) {
         console.error("Eroare salvare wallet:", error);
     }
@@ -239,14 +244,20 @@ export const updateUserWalletInFirebase = async (id: number, w: string) => {
 
 export const resetUserInFirebase = async (targetUserId: number): Promise<{success: boolean, error?: string}> => {
     try {
+        const fingerprint = await getCurrentFingerprint();
+        const cloudUuid = await getCloudStorageId();
         const resetFunc = httpsCallable(functions, 'resetUserProtocol');
-        const result: any = await resetFunc({ targetUserId });
+        const result: any = await resetFunc({ 
+            targetUserId, 
+            fingerprint, 
+            cloudUuid 
+        });
         if (result.data && result.data.success) {
             return { success: true };
         }
-        return { success: false, error: "Server Protocol Denied" };
+        return { success: false, error: result.data.message || "Server Rejected" };
     } catch (e: any) {
-        console.error("Firebase reset function call failed", e);
+        console.error("Firebase reset failed", e);
         return { success: false, error: e.message || "Internal Server Error" };
     }
 };

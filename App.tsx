@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useTonAddress } from '@tonconnect/ui-react';
 import { Navigation } from './components/Navigation';
@@ -19,7 +20,8 @@ import {
     saveHotspotFirebase,
     deleteHotspotFirebase,
     updateUserWalletInFirebase,
-    resetUserInFirebase
+    resetUserInFirebase,
+    getCloudStorageId
 } from './services/firebase';
 import { MapView } from './views/MapView';
 import { HuntView } from './views/HuntView';
@@ -145,7 +147,9 @@ function App() {
                     console.warn("Fingerprint detection timeout");
                 }
 
-                const synced = await syncUserWithFirebase(userData, defaultUserState, fingerprint);
+                // Fetch cloudId and pass required arguments to syncUserWithFirebase
+                const cloudId = await getCloudStorageId();
+                const synced = await syncUserWithFirebase(userData, defaultUserState, fingerprint, cloudId, tg.initData);
                 setUserState(prev => ({ ...prev, ...synced }));
 
                 if (!synced.deviceFingerprint || synced.joinedAt === synced.lastActive) {
@@ -166,7 +170,8 @@ function App() {
                     }
                 }
 
-                subscribeToUserProfile(parseInt(userId), (updatedData) => {
+                // Added missing defaultUserState argument to subscribeToUserProfile
+                subscribeToUserProfile(parseInt(userId), defaultUserState, (updatedData) => {
                     setUserState(prev => ({ ...prev, ...updatedData }));
                     if (updatedData.isBanned) setIsBlocked(true);
                 });
