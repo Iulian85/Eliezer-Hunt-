@@ -231,13 +231,15 @@ export const resetUserInFirebase = async (targetUserId: number): Promise<{succes
     try {
         const resetFunc = httpsCallable(functions, 'resetUserProtocol');
         const result: any = await resetFunc({ targetUserId });
+        // Verificăm structura exactă returnată de Cloud Function
         if (result.data && result.data.success) {
             return { success: true };
         }
-        return { success: false, error: "Server Rejected Request" };
+        return { success: false, error: "Server Protocol Denied" };
     } catch (e: any) {
-        console.error("Reset trigger failed", e);
-        return { success: false, error: e.message };
+        console.error("Firebase reset function call failed", e);
+        // Mapăm eroarea 'internal' către un mesaj mai descriptiv
+        return { success: false, error: e.message || "Internal Server Error" };
     }
 };
 

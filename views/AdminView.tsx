@@ -92,10 +92,13 @@ export const AdminView: React.FC<AdminViewProps> = ({
     };
 
     const handleSystemReset = async () => {
-        if (window.confirm("PROTOCOL INITIATED: Reset your admin account balance and progress to zero? (Identity will be preserved)")) {
+        if (window.confirm("CRITICAL PROTOCOL: Are you sure you want to reset your own balance and progress to zero? (Identity will be kept)")) {
             setIsResetting(true);
             try {
+                // onResetMyAccount() din App.tsx apelează resetUserInFirebase pentru adminId
                 await onResetMyAccount();
+            } catch (e: any) {
+                alert("Reset system failure: " + e.message);
             } finally {
                 setIsResetting(false);
             }

@@ -1,6 +1,6 @@
 
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
-import { onDocumentCreated } from 'firebase-functions/v2/firestore';
+import { onDocumentCreated } from 'firebase-functions/v2/functions/firestore'; // Fix import path for onDocumentCreated
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { GoogleGenAI } from '@google/genai';
@@ -11,19 +11,25 @@ if (getApps().length === 0) {
 
 const db = getFirestore();
 
+/**
+ * REZOLVARE RESET ADMIN:
+ * Această funcție nu mai șterge documentul (deleteDoc), ci face un reset la zero pe toate balanțele.
+ */
 export const resetUserProtocol = onCall(async (request) => {
-    if (!request.data || !request.data.targetUserId) {
+    // 1. Validăm ID-ul trimis de pe Frontend
+    const targetUserId = request.data?.targetUserId;
+    if (!targetUserId) {
         throw new HttpsError('invalid-argument', 'Missing targetUserId');
     }
 
-    const targetIdStr = request.data.targetUserId.toString();
-    const targetIdNum = parseInt(targetIdStr);
-    
-    console.log(`[ADMIN-ACTION] Initializing Soft Reset for ID: ${targetIdStr}`);
+    const idStr = targetUserId.toString();
+    const idNum = parseInt(idStr);
 
     try {
-        // 1. Definim setul de date pentru RESET (Zero Out)
-        const resetData = {
+        console.log(`[SYSTEM] Starting Soft Reset for Admin: ${idStr}`);
+
+        // 2. Definirea obiectului de reset conform cerințelor exacte
+        const resetPayload = {
             balance: 0,
             tonBalance: 0,
             gameplayBalance: 0,
@@ -42,52 +48,31 @@ export const resetUserProtocol = onCall(async (request) => {
             rareItemsCollected: 0,
             eventItemsCollected: 0,
             referrals: 0,
-            // Păstrăm: username, photoUrl, joinedAt, deviceFingerprint, biometricEnabled, walletAddress
-            lastActive: FieldValue.serverTimestamp()
+            lastActive: FieldValue.serverTimestamp() // Păstrăm tot restul: username, joinedAt, etc.
         };
 
-        // 2. Executăm UPDATE pe profil (nu delete!)
-        await db.collection('users').doc(targetIdStr).update(resetData);
+        // 3. Update profil utilizator - Folosim set merge:true ca să nu crape niciodată (internal error fix)
+        await db.collection('users').doc(idStr).set(resetPayload, { merge: true });
 
-        // 3. Helper pentru curățare loturi de documente asociate
-        const purgeUserHistory = async (collectionName: string, fieldName: string, values: any[]) => {
-            const snapshot = await db.collection(collectionName).where(fieldName, 'in', values).get();
-            if (snapshot.empty) return;
-
-            const chunks = [];
-            const docs = snapshot.docs;
-            for (let i = 0; i < docs.length; i += 450) {
-                chunks.push(docs.slice(i, i + 450));
-            }
-
-            for (const chunk of chunks) {
-                const batch = db.batch();
-                chunk.forEach(doc => batch.delete(doc.ref));
-                await batch.commit();
-            }
+        // 4. Curățare Claims & Referrals (Batch Delete)
+        const deleteHistory = async (col: string, field: string) => {
+            const snap = await db.collection(col).where(field, 'in', [idStr, idNum]).get();
+            if (snap.empty) return;
+            const batch = db.batch();
+            snap.docs.forEach(doc => batch.delete(doc.ref));
+            await batch.commit();
         };
 
-        const ids = [targetIdStr, targetIdNum];
+        // Ștergem doar claims făcute de admin și referrali unde el este referrer
+        await deleteHistory('claims', 'userId');
+        await deleteHistory('ad_claims', 'userId');
+        await deleteHistory('referral_claims', 'referrerId');
 
-        // 4. Curățăm istoricul de tranzacții care ar putea declanșa recalculări de balanță
-        await purgeUserHistory('claims', 'userId', ids);
-        await purgeUserHistory('ad_claims', 'userId', ids);
-        await purgeUserHistory('withdrawal_requests', 'userId', ids);
-        await purgeUserHistory('ad_sessions', 'userId', ids);
-        
-        // 5. Ștergem referral-urile trimise de acest admin (unde el este referrer)
-        await purgeUserHistory('referral_claims', 'referrerId', ids);
-
-        console.log(`[SUCCESS] Account ${targetIdStr} reset to zero.`);
-        return { success: true, message: "ACCOUNT_REINITIALIZED" };
+        return { success: true, message: "ADMIN_ACCOUNT_RESET_COMPLETE" };
 
     } catch (e: any) {
-        console.error("[CRITICAL] Reset Protocol Failed:", e);
-        // Dacă eroarea este că documentul nu există (deși n-ar trebui), e tot un fel de succes pentru reset
-        if (e.message.includes('NOT_FOUND')) {
-             return { success: true, message: "ALREADY_CLEAN" };
-        }
-        throw new HttpsError('internal', `Reset failed: ${e.message}`);
+        console.error("FATAL RESET ERROR:", e);
+        throw new HttpsError('internal', `Backend error: ${e.message}`);
     }
 });
 
