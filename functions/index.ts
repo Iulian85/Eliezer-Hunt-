@@ -12,22 +12,24 @@ if (getApps().length === 0) {
 const db = getFirestore();
 
 /**
- * PROTOCOL NUCLEAR RESET (SAFE FOR ADMIN)
- * Resetează balanța și progresul, dar NU șterge documentul de utilizator.
+ * PROTOCOL RESET BALANȚĂ (PĂSTREAZĂ USERUL/ADMINUL)
  */
 export const resetUserProtocol = onCall(async (request) => {
-    const { targetUserId } = request.data || {};
-    if (!targetUserId) throw new HttpsError('invalid-argument', 'Missing targetUserId');
+    // Verificăm dacă avem ID-ul țintă
+    const targetUserId = request.data?.targetUserId;
+    if (!targetUserId) {
+        throw new HttpsError('invalid-argument', 'ID-ul utilizatorului lipsește.');
+    }
 
     const idStr = targetUserId.toString();
     const idNum = parseInt(idStr);
 
     try {
-        const batch = db.batch();
+        console.log(`Începere resetare pentru Hunter: ${idStr}`);
         const userRef = db.collection('users').doc(idStr);
         
-        // 1. RESETĂM câmpurile de balanță și progres (NU ȘTERGEM USERUL)
-        batch.update(userRef, {
+        // 1. Resetăm toate cifrele la 0 folosind SET cu MERGE (mult mai stabil decât UPDATE)
+        await userRef.set({
             balance: 0,
             tonBalance: 0,
             gameplayBalance: 0,
@@ -36,40 +38,49 @@ export const resetUserProtocol = onCall(async (request) => {
             dailySupplyBalance: 0,
             merchantBalance: 0,
             referralBalance: 0,
-            referrals: 0,
-            referralNames: [],
-            collectedIds: [],
             adsWatched: 0,
             sponsoredAdsWatched: 0,
             rareItemsCollected: 0,
             eventItemsCollected: 0,
+            collectedIds: [],
+            referrals: 0,
+            referralNames: [],
             hasClaimedReferral: false,
+            lastDailyClaim: 0,
             lastActive: FieldValue.serverTimestamp()
-        });
+        }, { merge: true });
 
-        // 2. Curățăm istoricul fizic pentru a preveni recalculări accidentale
-        const purgeCollection = async (collName: string, fieldName: string) => {
-            const snapStrings = await db.collection(collName).where(fieldName, '==', idStr).get();
-            snapStrings.docs.forEach(d => batch.delete(d.ref));
-            
-            if (!isNaN(idNum)) {
-                const snapNums = await db.collection(collName).where(fieldName, '==', idNum).get();
-                snapNums.docs.forEach(d => batch.delete(d.ref));
+        // 2. Ștergem înregistrările de colectare (claims) pentru a nu se recalcula balanța
+        // Facem asta separat de batch pentru a evita eroarea "internal" la volume mari
+        const collectionsToPurge = ['claims', 'ad_claims', 'referral_claims', 'withdrawal_requests'];
+        
+        for (const collName of collectionsToPurge) {
+            try {
+                // Curățăm documentele unde userId este String
+                const snap = await db.collection(collName).where('userId', '==', idStr).get();
+                if (!snap.empty) {
+                    const batch = db.batch();
+                    snap.docs.forEach(doc => batch.delete(doc.ref));
+                    await batch.commit();
+                }
+                
+                // Curățăm documentele unde userId este Number (unele triggere folosesc number)
+                const snapNum = await db.collection(collName).where('userId', '==', idNum).get();
+                if (!snapNum.empty) {
+                    const batch = db.batch();
+                    snapNum.docs.forEach(doc => batch.delete(doc.ref));
+                    await batch.commit();
+                }
+            } catch (e) {
+                console.warn(`Atenție: Nu s-a putut curăța complet colecția ${collName}, dar balanța principală a fost resetată.`);
             }
-        };
+        }
 
-        await purgeCollection('claims', 'userId');
-        await purgeCollection('ad_claims', 'userId');
-        await purgeCollection('referral_claims', 'referredId');
-        await purgeCollection('referral_claims', 'referrerId');
-        await purgeCollection('withdrawal_requests', 'userId');
-
-        await batch.commit();
-        console.log(`[RESET PROTOCOL] User ${idStr} zeroed out. Identity preserved.`);
+        console.log(`Resetare reușită pentru ${idStr}. Balanța este acum 0.`);
         return { success: true };
     } catch (e: any) {
-        console.error("Reset Error:", e);
-        throw new HttpsError('internal', e.message);
+        console.error("Eroare CRITICĂ la resetare:", e);
+        throw new HttpsError('internal', `Resetarea a eșuat pe server: ${e.message}`);
     }
 });
 
