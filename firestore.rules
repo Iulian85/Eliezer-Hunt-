@@ -1,4 +1,3 @@
-
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -6,12 +5,19 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if true; 
       allow create: if true;
-      allow update: if false; // SECURITATE: Balanța poate fi schimbată DOAR de Cloud Functions
+      // SECURITATE: Permitem update doar pentru câmpuri de profil, NU pentru balanțe
+      allow update: if request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(['photoUrl', 'username', 'lastActive', 'deviceFingerprint', 'lastInitData', 'walletAddress', 'biometricEnabled']);
       allow delete: if false;
     }
     
     match /claims/{claimId} {
-      allow create: if true; // Permitem crearea, dar statusul rămâne 'pending' până verifică serverul
+      allow create: if true; // Userul depune cererea, serverul o procesează
+      allow read, update, delete: if false;
+    }
+
+    match /referral_claims/{claimId} {
+      allow create: if true;
       allow read, update, delete: if false;
     }
 
@@ -22,12 +28,12 @@ service cloud.firestore {
     
     match /campaigns/{campId} {
       allow read: if true;
-      allow write, delete: if false; 
+      allow write: if false; 
     }
 
     match /hotspots/{hId} {
       allow get, list: if true;
-      allow write, delete: if false;
+      allow write: if false;
     }
   }
 }

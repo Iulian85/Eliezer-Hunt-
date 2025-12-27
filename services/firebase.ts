@@ -1,4 +1,3 @@
-
 import { initializeApp, getApps, getApp } from "@firebase/app";
 import { 
     getFirestore, doc, getDoc, setDoc, updateDoc, collection, onSnapshot, query, orderBy, limit, getDocs,
@@ -53,22 +52,18 @@ export const syncUserWithFirebase = async (userData: any, localState: UserState,
     if (!userData.id) return localState;
     const userIdStr = String(userData.id);
     const userDocRef = doc(db, "users", userIdStr);
-    const initData = window.Telegram?.WebApp?.initData || "";
     
     try {
         const userDoc = await getDoc(userDocRef);
         if (userDoc.exists()) {
-            // Update doar metadate, NU balanța (balanța e gestionată de Server)
+            // Update doar metadate permise de reguli
             await updateDoc(userDocRef, { 
                 deviceFingerprint: fingerprint, 
                 lastActive: serverTimestamp(),
-                photoUrl: userData.photoUrl || '',
-                lastInitData: initData
+                photoUrl: userData.photoUrl || ''
             });
             return sanitizeUserData(userDoc.data(), localState);
         } else {
-            // User NOU: Folosim setDoc cu merge: true
-            // IMPORTANT: Setăm balanțele pe 0 DOAR DACĂ documentul nu există deja (ex: creat de referral bonus)
             const newUser: any = { 
                 telegramId: Number(userData.id), 
                 username: userData.username || `Hunter_${userIdStr.slice(-4)}`, 
@@ -76,9 +71,6 @@ export const syncUserWithFirebase = async (userData: any, localState: UserState,
                 deviceFingerprint: fingerprint, 
                 joinedAt: serverTimestamp(), 
                 lastActive: serverTimestamp(),
-                lastInitData: initData,
-                biometricEnabled: true,
-                // Inițializăm balanțele cu 0 doar la creație
                 balance: 0,
                 tonBalance: 0,
                 gameplayBalance: 0,
@@ -87,7 +79,8 @@ export const syncUserWithFirebase = async (userData: any, localState: UserState,
                 dailySupplyBalance: 0,
                 merchantBalance: 0,
                 referralBalance: 0,
-                collectedIds: []
+                collectedIds: [],
+                biometricEnabled: true
             };
             await setDoc(userDocRef, newUser, { merge: true });
             return newUser;
@@ -95,29 +88,37 @@ export const syncUserWithFirebase = async (userData: any, localState: UserState,
     } catch (e) { return localState; }
 };
 
-export const saveCollectionToFirebase = async (tgId: number, spawnId: string, clientValue: number, category?: HotspotCategory, tonReward: number = 0) => {
+/**
+ * RECOMPENSĂ SIGURĂ: Depunem o cerere (claim) pe care serverul o va procesa.
+ */
+export const saveCollectionToFirebase = async (tgId: number, spawnId: string, value: number, category?: HotspotCategory, tonReward: number = 0) => {
     if (!tgId) return;
     try {
-        const initData = window.Telegram?.WebApp?.initData || "";
-        // Obținem locația exactă pentru validarea server-side
-        const location = await new Promise<Coordinate>((resolve) => {
-            navigator.geolocation.getCurrentPosition(
-                (p) => resolve({lat: p.coords.latitude, lng: p.coords.longitude}), 
-                () => resolve({lat: 0, lng: 0}),
-                { enableHighAccuracy: true }
-            );
+        await addDoc(collection(db, "claims"), {
+            userId: Number(tgId),
+            spawnId: String(spawnId),
+            claimedValue: Number(value),
+            tonReward: Number(tonReward),
+            category: category || "URBAN",
+            timestamp: serverTimestamp(),
+            status: "pending"
         });
-        const secureClaimFunc = httpsCallable(functions, 'secureClaim');
-        await secureClaimFunc({ userId: tgId, spawnId, category, initData, coords: location, tonReward });
-    } catch (e) { console.error("Claim Protocol Error:", e); }
+    } catch (e) { console.error("Claim request failed:", e); }
 };
 
+/**
+ * REFERRAL SIGUR: Depunem o cerere de referral pentru server.
+ */
 export const processReferralReward = async (referrerId: string, userId: number, userName: string) => {
     try {
-        const initData = window.Telegram?.WebApp?.initData || "";
-        const referralFunc = httpsCallable(functions, 'secureReferral');
-        await referralFunc({ referrerId, userId, userName, initData });
-    } catch (e) { console.error("Referral Sync Error:", e); }
+        await addDoc(collection(db, "referral_claims"), {
+            referrerId: String(referrerId),
+            userId: Number(userId),
+            userName: String(userName),
+            timestamp: serverTimestamp(),
+            status: "pending"
+        });
+    } catch (e) { console.error("Referral request failed:", e); }
 };
 
 export const askGeminiProxy = async (messages: any[]) => {
@@ -129,15 +130,9 @@ export const askGeminiProxy = async (messages: any[]) => {
 };
 
 export const resetUserInFirebase = async (targetUserId: number) => {
-    try {
-        const userRef = doc(db, "users", String(targetUserId));
-        await updateDoc(userRef, {
-            balance: 0, tonBalance: 0, gameplayBalance: 0, rareBalance: 0, 
-            eventBalance: 0, dailySupplyBalance: 0, merchantBalance: 0, 
-            referralBalance: 0, collectedIds: [], lastActive: serverTimestamp()
-        });
-        return { success: true };
-    } catch (e: any) { return { success: false, error: e.message }; }
+    // În mod normal, resetarea balanței ar trebui făcută tot prin Cloud Function în producție
+    // Dar pentru admin, putem lăsa o funcție specială dacă regulile permit.
+    return { success: false, error: "Reset restriction active." };
 };
 
 export const getLeaderboard = async () => {
@@ -160,14 +155,7 @@ export const subscribeToWithdrawalRequests = (cb: (reqs: any[]) => void) => {
 export const updateWithdrawalStatus = async (id: string, status: 'completed' | 'rejected', txHash?: string) => {
     try {
         const reqRef = doc(db, "withdrawal_requests", id);
-        const reqDoc = await getDoc(reqRef);
-        if (!reqDoc.exists()) return false;
-        const data = reqDoc.data();
-        await updateDoc(reqRef, { status, processedAt: serverTimestamp(), txHash: txHash || '' });
-        if (status === 'completed' && data.userId) {
-            const userRef = doc(db, "users", String(data.userId));
-            await updateDoc(userRef, { tonBalance: increment(-Number(data.amount)) });
-        }
+        await updateDoc(reqRef, { status, processedAt: serverTimestamp() });
         return true;
     } catch (e) { return false; }
 };
