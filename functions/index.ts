@@ -15,7 +15,7 @@ const ADMIN_TELEGRAM_ID = 7319782429;
 
 /**
  * TRIGGER: Procesare referali (FRENS)
- * Acordă 50 puncte referrer-ului și 50 puncte noului user.
+ * Acordă 50 puncte referrer-ului și 25 puncte noului user ca bonus de bun venit.
  */
 export const onReferralClaimCreated = onDocumentCreated('referral_claims/{claimId}', async (event) => {
     const snap = event.data;
@@ -29,7 +29,7 @@ export const onReferralClaimCreated = onDocumentCreated('referral_claims/{claimI
     try {
         const batch = db.batch();
 
-        // 1. Update Referrer (cel care a invitat)
+        // 1. Update Referrer (cel care a invitat) -> +50 ELZR
         const referrerRef = db.collection('users').doc(referrerId);
         batch.set(referrerRef, {
             balance: FieldValue.increment(50),
@@ -39,11 +39,11 @@ export const onReferralClaimCreated = onDocumentCreated('referral_claims/{claimI
             lastActive: FieldValue.serverTimestamp()
         }, { merge: true });
 
-        // 2. Update Referred (noul utilizator - bonus de bun venit)
+        // 2. Update Referred (noul utilizator) -> +25 ELZR bonus
         const referredRef = db.collection('users').doc(referredId);
         batch.set(referredRef, {
-            balance: FieldValue.increment(50),
-            gameplayBalance: FieldValue.increment(50),
+            balance: FieldValue.increment(25),
+            gameplayBalance: FieldValue.increment(25),
             hasClaimedReferral: true,
             lastActive: FieldValue.serverTimestamp()
         }, { merge: true });

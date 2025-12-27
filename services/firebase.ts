@@ -90,6 +90,8 @@ const sanitizeUserData = (data: any, defaults: UserState): UserState => {
         dailySupplyBalance: Number(data.dailySupplyBalance || 0),
         merchantBalance: Number(data.merchantBalance || 0),
         referralBalance: Number(data.referralBalance || 0),
+        referralNames: data.referralNames || [],
+        hasClaimedReferral: !!data.hasClaimedReferral,
         collectedIds: data.collectedIds || []
     };
 };
@@ -151,7 +153,9 @@ export const syncUserWithFirebase = async (
                 collectedIds: [],
                 joinedAt: serverTimestamp(),
                 lastActive: serverTimestamp(),
-                biometricEnabled: true
+                biometricEnabled: true,
+                referralNames: [],
+                hasClaimedReferral: false
             };
             await setDoc(userDocRef, newUserProfile);
             return newUserProfile;
@@ -230,7 +234,7 @@ export const requestAdRewardFirebase = async (tgId: number, rewardValue: number)
 
 export const processReferralReward = async (referrerId: string, newUserId: number, newUserName: string) => {
     try {
-        // Înregistrăm referalul. Trigger-ul de backend onReferralClaimCreated se va ocupa de restul.
+        // Înregistrăm cererea de referal în Firestore. Trigger-ul de backend va face restul.
         await addDoc(collection(db, "referral_claims"), {
             referrerId: referrerId.toString(),
             referredId: Number(newUserId),
@@ -239,7 +243,7 @@ export const processReferralReward = async (referrerId: string, newUserId: numbe
             status: "pending"
         });
         
-        // Marcăm local utilizatorul că a folosit un referal pentru a preveni buclele
+        // Marcăm imediat noul utilizator că a utilizat codul de referal pentru a evita duplicatele.
         await updateDoc(doc(db, "users", newUserId.toString()), {
             hasClaimedReferral: true
         });
