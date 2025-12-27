@@ -1,4 +1,3 @@
-
 import React, { useEffect, useRef, useState, useMemo, Suspense } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { DeviceOrientationControls, PerspectiveCamera, Text, Billboard } from '@react-three/drei';
@@ -60,28 +59,18 @@ export const ARView: React.FC<ARViewProps> = ({ target, onClose, onCollect }) =>
     const [wonTon, setWonTon] = useState<number | null>(null);
     const [wonPoints, setWonPoints] = useState<number | null>(null);
 
-    // Resetăm totul când ID-ul monedei se schimbă (monedă nouă sau dispărută)
     useEffect(() => {
-        setCollecting(false);
-        setHasEscaped(false);
-        setGbRevealed(false);
-        setWonTon(null);
-        setWonPoints(null);
-        
         if (target?.spawn.id) {
+            setCollecting(false);
+            setHasEscaped(false);
+            setGbRevealed(false);
+            setWonTon(null);
+            setWonPoints(null);
             setIsRespawning(true);
             setCoinPos(new THREE.Vector3((Math.random() - 0.5) * 5, 1.2, -7));
             setTimeout(() => setIsRespawning(false), 800);
         }
     }, [target?.spawn.id]);
-
-    // Timer de rezervă pentru a scoate overlay-ul de SUCCESS dacă rămânem pe aceeași pagină
-    useEffect(() => {
-        if (collecting) {
-            const timer = setTimeout(() => setCollecting(false), 2500);
-            return () => clearTimeout(timer);
-        }
-    }, [collecting]);
 
     useEffect(() => {
         let mounted = true;
@@ -98,11 +87,14 @@ export const ARView: React.FC<ARViewProps> = ({ target, onClose, onCollect }) =>
                     videoRef.current.muted = true;
                     videoRef.current.onloadedmetadata = () => {
                         if (videoRef.current) {
-                            videoRef.current.play().then(() => { if (mounted) setCameraActive(true); }).catch(e => console.warn("Camera auto-play blocked", e));
+                            videoRef.current.play()
+                                .then(() => { if (mounted) setCameraActive(true); })
+                                .catch(e => console.warn("Camera auto-play blocked", e));
                         }
                     };
                 }
             } catch (err) { 
+                console.error("AR: Camera Error", err);
                 if (mounted) setPermissionError(true); 
             }
         };
@@ -113,7 +105,9 @@ export const ARView: React.FC<ARViewProps> = ({ target, onClose, onCollect }) =>
         };
     }, []);
 
-    const forceCameraPlay = () => { if (videoRef.current) videoRef.current.play().then(() => setCameraActive(true)).catch(console.error); };
+    const forceCameraPlay = () => {
+        if (videoRef.current) videoRef.current.play().then(() => setCameraActive(true)).catch(console.error);
+    };
 
     const playSound = (type: 'success' | 'error' | 'prize') => {
         try {
@@ -148,20 +142,36 @@ export const ARView: React.FC<ARViewProps> = ({ target, onClose, onCollect }) =>
              return;
         }
 
-        if (cat === 'GIFTBOX' || cat === 'EVENT' || cat === 'LANDMARK') {
+        const isGB = cat === 'GIFTBOX';
+        const isEvent = cat === 'EVENT';
+        const isLandmark = cat === 'LANDMARK';
+        
+        if (isGB || isEvent || isLandmark) {
             setLoadingAd(true);
             try {
                 const success = await showRewardedAd(ADSGRAM_BLOCK_ID);
                 setLoadingAd(false);
                 if (success) {
-                    if (cat === 'GIFTBOX') finishGiftBox();
-                    else triggerCollectionSuccess(Math.floor(target.spawn.value), 0);
-                } else playSound('error');
-            } catch (e) { setLoadingAd(false); playSound('error'); }
+                    if (isGB) {
+                        finishGiftBox();
+                    } else {
+                        triggerCollectionSuccess(Math.floor(target.spawn.value), 0);
+                    }
+                } else {
+                    playSound('error');
+                }
+            } catch (e) {
+                setLoadingAd(false);
+                playSound('error');
+            }
             return;
         }
 
-        if (target.spawn.sponsorData) { setPlayingSponsorAd(true); return; }
+        if (target.spawn.sponsorData) { 
+            setPlayingSponsorAd(true); 
+            return; 
+        }
+
         triggerCollectionSuccess(Math.floor(target.spawn.value), 0);
     };
 
@@ -169,15 +179,24 @@ export const ARView: React.FC<ARViewProps> = ({ target, onClose, onCollect }) =>
         const isTonWin = Math.random() < 0.15 && (target?.spawn.prizes?.length || 0) > 0; 
         let finalPoints = 0; 
         let finalTon = 0;
+
         if (isTonWin) {
             finalTon = target!.spawn.prizes![Math.floor(Math.random() * target!.spawn.prizes!.length)];
-            setWonTon(finalTon); setWonPoints(null);
+            setWonTon(finalTon); 
+            setWonPoints(null);
         } else {
             finalPoints = [100, 250, 500, 1000][Math.floor(Math.random() * 4)];
-            setWonPoints(finalPoints); setWonTon(null);
+            setWonPoints(finalPoints); 
+            setWonTon(null);
         }
-        setGbRevealed(true); playSound('prize');
-        setTimeout(() => triggerCollectionSuccess(finalPoints, finalTon), 4500);
+
+        setGbRevealed(true); 
+        playSound('prize');
+        
+        // Așteptăm ca animația Mystery Box să se termine înainte de a trimite punctele către Wallet
+        setTimeout(() => {
+            triggerCollectionSuccess(finalPoints, finalTon);
+        }, 4500);
     };
 
     const triggerCollectionSuccess = (points: number, tonAmount: number) => {
@@ -185,6 +204,8 @@ export const ARView: React.FC<ARViewProps> = ({ target, onClose, onCollect }) =>
         setGbRevealed(false); 
         playSound('success');
         if (window.Telegram?.WebApp?.HapticFeedback) window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
+        
+        // Trimitem datele către funcția onCollect (care ajunge în HuntView -> handleARCollect)
         onCollect(points, tonAmount);
     };
 
@@ -211,12 +232,14 @@ export const ARView: React.FC<ARViewProps> = ({ target, onClose, onCollect }) =>
                     <video ref={videoRef} className="w-full h-full object-cover" autoPlay playsInline muted />
                 ) : (
                     <div className="w-full h-full bg-slate-900 flex flex-col items-center justify-center p-10 text-center text-white">
-                        <Camera size={40} className="text-red-500 mb-4" /><p className="text-sm font-black uppercase">Camera Error</p>
+                        <Camera size={40} className="text-red-500 mb-4" />
+                        <p className="text-sm font-black uppercase">Camera Error</p>
                     </div>
                 )}
                 {!cameraActive && !permissionError && (
                     <div className="absolute inset-0 bg-slate-950 flex flex-col items-center justify-center z-50">
-                        <Loader2 className="text-cyan-500 animate-spin" size={48} /><p className="text-white text-[10px] uppercase font-black tracking-widest mt-4">Initializing Lens...</p>
+                        <Loader2 className="text-cyan-500 animate-spin" size={48} />
+                        <p className="text-white text-[10px] uppercase font-black tracking-widest mt-4">Initializing Lens...</p>
                     </div>
                 )}
             </div>
@@ -224,10 +247,20 @@ export const ARView: React.FC<ARViewProps> = ({ target, onClose, onCollect }) =>
             <div className={`absolute inset-0 z-10 pointer-events-none transition-opacity duration-700 ${cameraActive ? 'opacity-100' : 'opacity-0'}`}>
                 <Canvas gl={{ alpha: true, antialias: true }} onCreated={({ gl }) => gl.setClearColor(0x000000, 0)} style={{ pointerEvents: 'auto' }}>
                     <Suspense fallback={null}>
-                        <AmbientLight intensity={1.5} /><DirectionalLight position={[5, 10, 5]} intensity={2} /><GyroCamera /><PerspectiveCamera makeDefault position={[0, 1.6, 0]} />
+                        <AmbientLight intensity={1.5} />
+                        <DirectionalLight position={[5, 10, 5]} intensity={2} />
+                        <GyroCamera />
+                        <PerspectiveCamera makeDefault position={[0, 1.6, 0]} />
+                        
                         {!isRespawning && target && (
                             <>
-                                <DriftingCoin coinRef={coinGroupRef} initialPos={coinPos} onDistanceChange={setDistanceToCoin} onEscape={handleEscape} isPaused={collecting || playingSponsorAd || hasEscaped || gbRevealed} />
+                                <DriftingCoin 
+                                    coinRef={coinGroupRef} 
+                                    initialPos={coinPos} 
+                                    onDistanceChange={setDistanceToCoin} 
+                                    onEscape={handleEscape} 
+                                    isPaused={collecting || playingSponsorAd || hasEscaped || gbRevealed} 
+                                />
                                 <Group ref={coinGroupRef} position={coinPos}>
                                     {!hasEscaped && (
                                         <>
@@ -236,7 +269,16 @@ export const ARView: React.FC<ARViewProps> = ({ target, onClose, onCollect }) =>
                                                     {canInteract ? (cat === 'GIFTBOX' ? "OPEN" : "TAP TO COLLECT") : `${distanceToCoin.toFixed(1)}m`}
                                                 </Text>
                                             </Billboard>
-                                            <Coin3D scale={cat === 'GIFTBOX' ? 0.45 : 0.3} interactive={canInteract && !collecting && !loadingAd} onClick={handleCoinTap} ghost={!canInteract} collected={collecting} isGiftBox={cat === 'GIFTBOX'} customText={cat === 'GIFTBOX' ? "GIFT" : target.spawn.customText} logoUrl={target.spawn.logoUrl} />
+                                            <Coin3D 
+                                                scale={cat === 'GIFTBOX' ? 0.45 : 0.3} 
+                                                interactive={canInteract && !collecting && !loadingAd} 
+                                                onClick={handleCoinTap} 
+                                                ghost={!canInteract} 
+                                                collected={collecting} 
+                                                isGiftBox={cat === 'GIFTBOX'}
+                                                customText={cat === 'GIFTBOX' ? "GIFT" : target.spawn.customText}
+                                                logoUrl={target.spawn.logoUrl} 
+                                            />
                                         </>
                                     )}
                                 </Group>
@@ -251,7 +293,7 @@ export const ARView: React.FC<ARViewProps> = ({ target, onClose, onCollect }) =>
                     <div className="bg-black/40 backdrop-blur-xl px-4 py-2 rounded-xl border border-white/10">
                         <p className="text-[8px] text-slate-400 uppercase tracking-widest font-black">Scanning Sector</p>
                         <p className="text-white text-xs font-black flex items-center gap-2">
-                             {cat === 'GIFTBOX' ? <Gift size={14}/> : <Zap size={14}/>} {target?.spawn.name || "Searching Signals..."}
+                             {cat === 'GIFTBOX' ? <Gift size={14}/> : <Zap size={14}/>} {target?.spawn.name || "Searching..."}
                         </p>
                     </div>
                     <button onClick={onClose} className="bg-red-600/80 p-3 rounded-full text-white pointer-events-auto active:scale-90 shadow-xl"><X size={24} /></button>
@@ -263,7 +305,9 @@ export const ARView: React.FC<ARViewProps> = ({ target, onClose, onCollect }) =>
                             <PackageOpen className="text-amber-400 animate-bounce" size={48} />
                             <div className="text-center">
                                 <h2 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Mystery Found</h2>
-                                <span className="text-4xl font-black text-white flex items-center gap-2">{wonTon !== null ? wonTon : wonPoints} {wonTon !== null ? <Wallet size={24}/> : <Coins size={24}/>}</span>
+                                <span className="text-4xl font-black text-white flex items-center gap-2">
+                                    {wonTon !== null ? wonTon : wonPoints} {wonTon !== null ? <Wallet size={24}/> : <Coins size={24}/>}
+                                </span>
                             </div>
                         </div>
                     </div>
@@ -271,14 +315,15 @@ export const ARView: React.FC<ARViewProps> = ({ target, onClose, onCollect }) =>
 
                 {collecting && !gbRevealed && (
                     <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-green-500/20 backdrop-blur-xl p-8 rounded-[3rem] border border-green-500/40 flex flex-col items-center gap-4 animate-in zoom-in duration-500">
-                        <CheckCircle className="text-green-400" size={64} /><h2 className="text-2xl font-black text-white uppercase tracking-tighter">SUCCESS</h2>
+                        <CheckCircle className="text-green-400" size={64} />
+                        <h2 className="text-2xl font-black text-white uppercase tracking-tighter">SUCCESS</h2>
                     </div>
                 )}
 
                 <div className="flex justify-center mb-12">
                     <div className="bg-black/60 backdrop-blur-xl px-10 py-3 rounded-full border border-white/10 pointer-events-auto">
                         <span className="text-xs font-mono font-black text-white">{target ? distanceToCoin.toFixed(1) : "--.-"}m</span>
-                        <span className={`ml-4 text-[9px] font-black uppercase ${target && distanceToCoin < 6 ? 'text-green-400' : 'text-slate-500'}`}>{target && distanceToCoin < 6 ? "READY" : "LOCKED"}</span>
+                        <span className={`ml-4 text-[9px] font-black uppercase ${distanceToCoin < 6 ? 'text-green-400' : 'text-slate-500'}`}>{distanceToCoin < 6 ? "READY" : "LOCKED"}</span>
                     </div>
                 </div>
             </div>
@@ -292,7 +337,8 @@ export const ARView: React.FC<ARViewProps> = ({ target, onClose, onCollect }) =>
 
             {loadingAd && (
                 <div className="fixed inset-0 z-[10025] bg-black/80 backdrop-blur flex flex-col items-center justify-center gap-4 pointer-events-auto">
-                    <Loader2 className="text-cyan-400 animate-spin" size={48} /><p className="text-white font-black uppercase tracking-widest text-[10px] animate-pulse">Requesting Rewards...</p>
+                    <Loader2 className="text-cyan-400 animate-spin" size={48} />
+                    <p className="text-white font-black uppercase tracking-widest text-[10px] animate-pulse">Requesting Rewards...</p>
                 </div>
             )}
         </div>
