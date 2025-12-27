@@ -238,6 +238,29 @@ export const markUserAirdropped = async (id: string, amount: number) => {
 
 export const subscribeToCampaigns = (cb: any) => onSnapshot(collection(db, "campaigns"), snap => cb(snap.docs.map(d => d.data())));
 export const subscribeToHotspots = (cb: any) => onSnapshot(collection(db, "hotspots"), snap => cb(snap.docs.map(d => d.data())));
+export const subscribeToWithdrawalRequests = (cb: (reqs: any[]) => void) => {
+    const q = query(collection(db, "withdrawal_requests"), orderBy("timestamp", "desc"));
+    return onSnapshot(q, snap => cb(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+};
+
+export const updateWithdrawalStatus = async (id: string, status: 'completed' | 'rejected', txHash?: string) => {
+    try {
+        const reqRef = doc(db, "withdrawal_requests", id);
+        const reqDoc = await getDoc(reqRef);
+        if (!reqDoc.exists()) return false;
+        
+        const data = reqDoc.data();
+        await updateDoc(reqRef, { status, processedAt: serverTimestamp(), txHash: txHash || '' });
+
+        // Dacă e marcat ca finalizat, scădem din balanța de TON a userului
+        if (status === 'completed' && data.userId) {
+            const userRef = doc(db, "users", String(data.userId));
+            await updateDoc(userRef, { tonBalance: increment(-Number(data.amount)) });
+        }
+        return true;
+    } catch (e) { return false; }
+};
+
 export const saveHotspotFirebase = async (h: any) => setDoc(doc(db, "hotspots", h.id), h);
 export const deleteHotspotFirebase = async (id: string) => deleteDoc(doc(db, "hotspots", id));
 export const deleteUserFirebase = async (id: string) => deleteDoc(doc(db, "users", id));
