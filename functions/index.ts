@@ -22,6 +22,7 @@ export const onReferralClaimCreated = onDocumentCreated('referral_claims/{claimI
     if (!snap) return;
     const claim = snap.data();
     
+    // Convertim ID-urile în string-uri, deoarece cheile documentelor 'users' sunt string-uri în Firestore
     const referrerId = claim.referrerId.toString();
     const referredId = claim.referredId.toString();
     const referredName = claim.referredName || "New Hunter";
@@ -39,7 +40,7 @@ export const onReferralClaimCreated = onDocumentCreated('referral_claims/{claimI
             lastActive: FieldValue.serverTimestamp()
         }, { merge: true });
 
-        // 2. Update Referred (noul utilizator) -> +25 ELZR bonus
+        // 2. Update Referred (noul utilizator) -> +25 ELZR bonus de bun venit
         const referredRef = db.collection('users').doc(referredId);
         batch.set(referredRef, {
             balance: FieldValue.increment(25),
@@ -50,6 +51,7 @@ export const onReferralClaimCreated = onDocumentCreated('referral_claims/{claimI
 
         await batch.commit();
         await snap.ref.update({ status: 'processed', processedAt: FieldValue.serverTimestamp() });
+        console.log(`Referral processed successfully: ${referrerId} invited ${referredId}`);
 
     } catch (err) {
         console.error("Referral Processing Failed:", err);

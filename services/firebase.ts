@@ -120,22 +120,28 @@ export const syncUserWithFirebase = async (
     if (!userData.id) return localState;
     const userDocRef = doc(db, "users", userData.id.toString());
     
+    // Construim numele complet pentru a fi afișat în TOP și Network
+    const fullName = [userData.firstName, userData.lastName].filter(Boolean).join(' ');
+    const displayName = fullName || userData.username || `Hunter_${userData.id.toString().slice(-4)}`;
+
     try {
         const userDoc = await getDoc(userDocRef);
         if (userDoc.exists()) {
             const existingData = userDoc.data();
-            if (existingData.cloudStorageId !== cloudId || existingData.deviceFingerprint !== fingerprint) {
+            // Actualizăm mereu numele dacă s-a schimbat în Telegram
+            if (existingData.username !== displayName || existingData.cloudStorageId !== cloudId) {
                 await updateDoc(userDocRef, { 
+                    username: displayName,
                     cloudStorageId: cloudId, 
                     deviceFingerprint: fingerprint,
                     lastActive: serverTimestamp()
                 });
             }
-            return sanitizeUserData({ ...existingData, cloudStorageId: cloudId }, localState);
+            return sanitizeUserData({ ...existingData, username: displayName, cloudStorageId: cloudId }, localState);
         } else {
             const newUserProfile: any = {
                 telegramId: userData.id,
-                username: userData.username || `Hunter_${userData.id.toString().slice(-4)}`,
+                username: displayName,
                 photoUrl: userData.photoUrl || '',
                 deviceFingerprint: fingerprint,
                 cloudStorageId: cloudId,
@@ -228,14 +234,10 @@ export const saveCollectionToFirebase = async (tgId: number, spawnId: string, va
     }
 };
 
-export const requestAdRewardFirebase = async (tgId: number, rewardValue: number) => {
-    await saveCollectionToFirebase(tgId, `ad-manual-${Date.now()}`, rewardValue, 'AD_REWARD');
-};
-
 export const processReferralReward = async (referrerId: string, newUserId: number, newUserName: string) => {
     try {
-        // Înregistrăm cererea de referal în Firestore. Trigger-ul de backend va face restul.
-        await addDoc(collection(db, "referral_claims"), {
+        const claimRef = doc(collection(db, "referral_claims"));
+        await setDoc(claimRef, {
             referrerId: referrerId.toString(),
             referredId: Number(newUserId),
             referredName: newUserName,
@@ -243,10 +245,11 @@ export const processReferralReward = async (referrerId: string, newUserId: numbe
             status: "pending"
         });
         
-        // Marcăm imediat noul utilizator că a utilizat codul de referal pentru a evita duplicatele.
-        await updateDoc(doc(db, "users", newUserId.toString()), {
+        await setDoc(doc(db, "users", newUserId.toString()), {
             hasClaimedReferral: true
-        });
+        }, { merge: true });
+
+        console.log(`Referral link created: ${referrerId} -> ${newUserId} (${newUserName})`);
     } catch (e) {
         console.error("Referral process error", e);
     }
@@ -257,7 +260,7 @@ export const getLeaderboard = async () => {
     const snapshot = await getDocs(q);
     return snapshot.docs.map((docSnap, index) => ({
         rank: index + 1,
-        username: docSnap.data().username || "Hunter",
+        username: docSnap.data().username || "Anonymous Hunter",
         score: Number(docSnap.data().balance || 0)
     }));
 };
