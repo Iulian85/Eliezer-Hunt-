@@ -33,9 +33,6 @@ import { AdminView } from './views/AdminView';
 import { LeaderboardView } from './views/LeaderboardView';
 import { AIChat } from './components/AIChat';
 
-// Locație de fallback neutră - nu va fi afișată dacă avem GPS
-const FALLBACK_LOCATION: Coordinate = { lat: 0, lng: 0 }; 
-
 const defaultUserState: UserState = {
     balance: 0,
     tonBalance: 0,
@@ -104,7 +101,7 @@ function App() {
 
     const initialSpawnDone = useRef(false);
 
-    // Pornim monitorizarea GPS imediat pentru a avea locația gata după unlock
+    // Pornim GPS imediat pentru a evita "Africa" (DEFAULT_LOCATION)
     useEffect(() => {
         if (!navigator.geolocation) return;
         const watchId = navigator.geolocation.watchPosition(
@@ -116,7 +113,7 @@ function App() {
                     initialSpawnDone.current = true;
                 }
             },
-            (err) => { console.warn("GPS Satellite Lock Error"); },
+            (err) => { console.warn("GPS Satellite Search..."); },
             { enableHighAccuracy: true, timeout: 10000 }
         );
         return () => navigator.geolocation.clearWatch(watchId);
@@ -166,7 +163,7 @@ function App() {
                     setCurrentFingerprint(fingerprint);
                 } catch (e) {}
 
-                // FIX: Sincronizare cu Firebase (folosind corect numarul de argumente)
+                // FIX: Sincronizare corecta cu Firebase
                 const synced = await syncUserWithFirebase(userData, defaultUserState, fingerprint);
                 setUserState(prev => ({ ...prev, ...synced }));
 
@@ -295,7 +292,7 @@ function App() {
         );
     }
 
-    // ECRAN RESTRICȚIE BROWSER (Design-ul tău original restaurat)
+    // Restriction screen for non-Telegram environments (DESIGN ORIGINAL RESTAURAT)
     if (!isTelegram) {
         return (
             <div className="h-screen w-screen bg-[#020617] flex flex-col items-center justify-center p-8 text-center relative overflow-hidden">
@@ -317,7 +314,7 @@ function App() {
         );
     }
 
-    // ECRAN SECURITY ALERT (Design-ul tău original restaurat)
+    // Security screen (DESIGN ORIGINAL RESTAURAT)
     if (isBlocked && !isAdmin) {
         return (
             <div className="h-screen w-screen bg-slate-950 flex flex-col items-center justify-center p-8 text-center">
@@ -338,7 +335,7 @@ function App() {
         );
     }
 
-    // ECRAN SECURE GATEWAY / BIOMETRIC (Design-ul tău original restaurat cu animate-scan)
+    // Biometric screen (DESIGN ORIGINAL RESTAURAT CU ANIMATIE)
     if (!isUnlocked && (!isBlocked || !isAdmin)) {
         return (
             <div className="h-screen w-screen bg-[#020617] flex flex-col items-center justify-center p-8 relative overflow-hidden">
@@ -372,18 +369,14 @@ function App() {
                     <p className="mt-8 text-[8px] text-slate-700 font-black uppercase tracking-widest">Telegram Native Protocol v5.2 • Global Biometric Enabled</p>
                 </div>
                 <style>{`
-                    @keyframes scan {
-                        0% { transform: translateY(0); opacity: 0; }
-                        50% { opacity: 1; }
-                        100% { transform: translateY(128px); opacity: 0; }
-                    }
+                    @keyframes scan { 0% { transform: translateY(0); opacity: 0; } 50% { opacity: 1; } 100% { transform: translateY(128px); opacity: 0; } }
                     .animate-scan { animation: scan 1.5s ease-in-out infinite; }
                 `}</style>
             </div>
         );
     }
 
-    // AȘTEPTARE SEMNAL GPS (Reparația pentru "Africa")
+    // REPARATIE AFRICA: Asteptam satelitul GPS
     if (!userState.location) {
         return (
             <div className="h-screen w-screen bg-slate-950 flex flex-col items-center justify-center text-white">
