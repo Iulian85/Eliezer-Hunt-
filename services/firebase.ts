@@ -81,25 +81,23 @@ export const syncUserWithFirebase = async (userData: any, localState: UserState,
 };
 
 /**
- * RECOMPENSĂ INSTANTĂ (Sistem Securizat)
- * Am eliminat addDoc-ul care bloca punctele în "pending".
+ * RECOMPENSĂ INSTANTĂ (Sistem 100% Server-Side)
+ * Nu mai scriem niciun 'pending' de pe telefon.
  */
 export const saveCollectionToFirebase = async (tgId: number, spawnId: string, value: number, category?: HotspotCategory, tonReward: number = 0) => {
     if (!tgId) return;
     try {
         const secureClaimFunc = httpsCallable(functions, 'secureClaim');
-        // Trimitem totul la server. Serverul va face update-ul atomic.
+        // Aceasta este singura cale prin care se alocă puncte acum.
         await secureClaimFunc({ 
             userId: tgId, 
             spawnId, 
-            category, 
+            category: category || "URBAN", 
             claimedValue: value, 
             tonReward 
         });
     } catch (e) {
-        console.error("Cloud Function Claim Failed:", e);
-        // Dacă eșuează funcția, nu mai scriem nimic în Firestore de pe client
-        // pentru a evita documentele "pending" orfane.
+        console.error("FAIL: Secure Claim Error", e);
     }
 };
 

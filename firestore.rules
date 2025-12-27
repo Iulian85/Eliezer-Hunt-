@@ -1,3 +1,4 @@
+
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -5,25 +6,20 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if true; 
       allow create: if true;
-      // SECURITATE: Permitem update doar pentru câmpuri de profil, NU pentru balanțe
+      // Clientul NU are voie să modifice balanțele (numerele de puncte)
       allow update: if request.resource.data.diff(resource.data).affectedKeys()
-        .hasOnly(['photoUrl', 'username', 'lastActive', 'deviceFingerprint', 'lastInitData', 'walletAddress', 'biometricEnabled']);
-      allow delete: if false;
+        .hasOnly(['photoUrl', 'username', 'lastActive', 'deviceFingerprint', 'walletAddress', 'biometricEnabled']);
     }
     
     match /claims/{claimId} {
-      allow create: if true; // Userul depune cererea, serverul o procesează
-      allow read, update, delete: if false;
-    }
-
-    match /referral_claims/{claimId} {
-      allow create: if true;
-      allow read, update, delete: if false;
+      // Colecția de log-uri este doar pentru citit (opțional) sau creată de server (Admin SDK)
+      allow read: if false;
+      allow create: if false; // Forțăm utilizarea Cloud Functions pentru securitate
     }
 
     match /withdrawal_requests/{reqId} {
       allow create: if true;
-      allow read, update, delete: if false;
+      allow read: if false;
     }
     
     match /campaigns/{campId} {
@@ -32,7 +28,7 @@ service cloud.firestore {
     }
 
     match /hotspots/{hId} {
-      allow get, list: if true;
+      allow read: if true;
       allow write: if false;
     }
   }
