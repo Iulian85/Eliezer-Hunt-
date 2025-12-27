@@ -143,7 +143,8 @@ export interface LeaderboardEntry {
 
 declare global {
     interface Window {
-        grecaptcha: any;
+        // FIX: Added optionality to grecaptcha to resolve "All declarations of 'grecaptcha' must have identical modifiers" error
+        grecaptcha?: any;
         Telegram?: {
             WebApp: {
                 ready: () => void;

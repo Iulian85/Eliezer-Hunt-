@@ -260,11 +260,20 @@ function App() {
     }, []);
 
     const handleResetAccount = async () => {
-        if (window.confirm("NUCLEAR RESET: Ștergi definitiv activitatea și reîncepi onboarding-ul?")) {
+        if (window.confirm("NUCLEAR RESET: Ștergi definitiv activitatea și reîncepi onboarding-ul? Această acțiune va curăța toate punctele din Wallet!")) {
             if (userState.telegramId) {
-                await resetUserInFirebase(userState.telegramId);
-                await clearCloudStorageId();
-                window.location.reload();
+                setIsLoading(true);
+                // 1. Apelăm Cloud Function pentru a purja DB
+                const result = await resetUserInFirebase(userState.telegramId);
+                if (result.success) {
+                    // 2. Curățăm identificatorii locali pentru a preveni re-sincronizarea imediată
+                    await clearCloudStorageId();
+                    // 3. Forțăm reload pentru un mediu curat
+                    window.location.reload();
+                } else {
+                    alert("Error during reset protocol: " + result.error);
+                    setIsLoading(false);
+                }
             }
         }
     };

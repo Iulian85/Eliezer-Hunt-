@@ -12,6 +12,49 @@ if (getApps().length === 0) {
 const db = getFirestore();
 
 /**
+ * PROTOCOL NUCLEAR RESET
+ * Șterge complet identitatea utilizatorului și toate urmele de puncte/claims.
+ */
+export const resetUserProtocol = onCall(async (request) => {
+    const { targetUserId } = request.data || {};
+    if (!targetUserId) throw new HttpsError('invalid-argument', 'Missing targetUserId');
+
+    const idStr = targetUserId.toString();
+    const idNum = parseInt(idStr);
+
+    try {
+        const batch = db.batch();
+        
+        // 1. Ștergem documentul principal (ID-ul documentului este string)
+        batch.delete(db.collection('users').doc(idStr));
+
+        // 2. Funcție pentru a purja colecțiile unde userId poate fi stocat ca String sau Number
+        const purgeCollection = async (collName: string, fieldName: string) => {
+            const snapStrings = await db.collection(collName).where(fieldName, '==', idStr).get();
+            snapStrings.docs.forEach(d => batch.delete(d.ref));
+            
+            if (!isNaN(idNum)) {
+                const snapNums = await db.collection(collName).where(fieldName, '==', idNum).get();
+                snapNums.docs.forEach(d => batch.delete(d.ref));
+            }
+        };
+
+        // Curățăm tot istoricul care dă puncte
+        await purgeCollection('claims', 'userId');
+        await purgeCollection('ad_claims', 'userId');
+        await purgeCollection('referral_claims', 'referredId');
+        await purgeCollection('referral_claims', 'referrerId');
+        await purgeCollection('withdrawal_requests', 'userId');
+
+        await batch.commit();
+        console.log(`[NUCLEAR RESET] Purged user ${idStr} and all associated extraction data.`);
+        return { success: true };
+    } catch (e: any) {
+        throw new HttpsError('internal', e.message);
+    }
+});
+
+/**
  * TRIGGER: Procesare referali (FRENS)
  */
 export const onReferralClaimCreated = onDocumentCreated('referral_claims/{claimId}', async (event) => {
@@ -46,49 +89,6 @@ export const onReferralClaimCreated = onDocumentCreated('referral_claims/{claimI
         await snap.ref.update({ status: 'processed', processedAt: FieldValue.serverTimestamp() });
     } catch (err) {
         console.error("[Frens Engine] Error:", err);
-    }
-});
-
-/**
- * PROTOCOL NUCLEAR RESET
- * Șterge complet identitatea utilizatorului și toate urmele de puncte/claims.
- */
-export const resetUserProtocol = onCall(async (request) => {
-    const { targetUserId } = request.data || {};
-    if (!targetUserId) throw new HttpsError('invalid-argument', 'Missing targetUserId');
-
-    const idStr = targetUserId.toString();
-    const idNum = parseInt(idStr);
-
-    try {
-        // Folosim o abordare mai directă pentru a asigura curățarea
-        const batch = db.batch();
-        
-        // 1. Ștergem documentul de utilizator
-        const userRef = db.collection('users').doc(idStr);
-        batch.delete(userRef);
-
-        // 2. Curățăm toate colecțiile de activitate folosind Query
-        const purgeCollection = async (collName: string, fieldName: string) => {
-            const snap1 = await db.collection(collName).where(fieldName, '==', idStr).get();
-            snap1.docs.forEach(d => batch.delete(d.ref));
-            if (!isNaN(idNum)) {
-                const snap2 = await db.collection(collName).where(fieldName, '==', idNum).get();
-                snap2.docs.forEach(d => batch.delete(d.ref));
-            }
-        };
-
-        await purgeCollection('claims', 'userId');
-        await purgeCollection('ad_claims', 'userId');
-        await purgeCollection('referral_claims', 'referredId');
-        await purgeCollection('referral_claims', 'referrerId');
-        await purgeCollection('withdrawal_requests', 'userId');
-
-        await batch.commit();
-        return { success: true };
-    } catch (e: any) {
-        console.error("Nuclear Reset Error:", e);
-        throw new HttpsError('internal', e.message);
     }
 });
 

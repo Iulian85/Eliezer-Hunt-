@@ -65,9 +65,11 @@ export const AdminView: React.FC<AdminViewProps> = ({
         setIsLoadingUsers(false);
     };
 
-    const formatDate = (ts?: number) => {
+    const formatDate = (ts?: any) => {
         if (!ts) return 'N/A';
-        return new Intl.DateTimeFormat('en-US', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(ts);
+        // Handle Firestore Timestamp
+        const date = ts.toDate ? ts.toDate() : new Date(ts);
+        return new Intl.DateTimeFormat('en-US', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(date);
     };
 
     const handleDeleteUser = async (id: string) => {

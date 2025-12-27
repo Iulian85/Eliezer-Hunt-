@@ -16,7 +16,8 @@ import {
     serverTimestamp,
     increment,
     deleteDoc,
-    arrayUnion
+    arrayUnion,
+    QuerySnapshot
 } from "@firebase/firestore";
 import { getFunctions, httpsCallable } from "@firebase/functions";
 import FingerprintJS from '@fingerprintjs/fingerprintjs';
@@ -138,7 +139,8 @@ export const syncUserWithFirebase = async (
     try {
         const userDoc = await getDoc(userDocRef);
         if (userDoc.exists()) {
-            const existingData = userDoc.data();
+            // FIX: Casting to any to allow property access on Firestore data
+            const existingData = userDoc.data() as any;
             if (existingData.username !== displayName || existingData.cloudStorageId !== cloudId) {
                 await updateDoc(userDocRef, { 
                     username: displayName,
@@ -147,7 +149,8 @@ export const syncUserWithFirebase = async (
                     lastActive: serverTimestamp()
                 });
             }
-            return sanitizeUserData({ ...existingData, username: displayName, cloudStorageId: cloudId }, localState);
+            // FIX: Casting to any to allow spreading of Firestore data
+            return sanitizeUserData({ ...(userDoc.data() as any), username: displayName, cloudStorageId: cloudId }, localState);
         } else {
             const newUserProfile: any = {
                 telegramId: userData.id,
@@ -270,15 +273,20 @@ export const processReferralReward = async (referrerId: string, newUserId: numbe
 export const getLeaderboard = async () => {
     const q = query(collection(db, "users"), orderBy("balance", "desc"), limit(50));
     const snapshot = await getDocs(q);
-    return snapshot.docs.map((docSnap, index) => ({
-        rank: index + 1,
-        username: docSnap.data().username || "Anonymous Hunter",
-        score: Number(docSnap.data().balance || 0)
-    }));
+    return snapshot.docs.map((docSnap, index) => {
+        // FIX: Casting data() result to any to access properties
+        const data = docSnap.data() as any;
+        return {
+            rank: index + 1,
+            username: data.username || "Anonymous Hunter",
+            score: Number(data.balance || 0)
+        };
+    });
 };
 
-export const subscribeToCampaigns = (cb: any) => onSnapshot(collection(db, "campaigns"), snap => cb(snap.docs.map(d => d.data())));
-export const subscribeToHotspots = (cb: any) => onSnapshot(collection(db, "hotspots"), snap => cb(snap.docs.map(d => d.data())));
+// FIX: Casting snap to any to resolve incorrectly inferred DocumentSnapshot instead of QuerySnapshot
+export const subscribeToCampaigns = (cb: any) => onSnapshot(collection(db, "campaigns"), (snap: any) => cb(snap.docs.map((d: any) => d.data())));
+export const subscribeToHotspots = (cb: any) => onSnapshot(collection(db, "hotspots"), (snap: any) => cb(snap.docs.map((d: any) => d.data())));
 export const saveHotspotFirebase = async (h: any) => setDoc(doc(db, "hotspots", h.id), h);
 export const deleteHotspotFirebase = async (id: string) => deleteDoc(doc(db, "hotspots", id));
 export const deleteUserFirebase = async (id: string) => deleteDoc(doc(db, "users", id));
@@ -321,4 +329,5 @@ export const processWithdrawTON = async (tgId: number, amount: number) => {
     return true;
 };
 
-export const getAllUsersAdmin = async () => (await getDocs(collection(db, "users"))).docs.map(d => ({id: d.id, ...d.data()}));
+// FIX: Casting d.data() to any to allow spreading of user data
+export const getAllUsersAdmin = async () => (await getDocs(collection(db, "users"))).docs.map(d => ({id: d.id, ...(d.data() as any)}));
