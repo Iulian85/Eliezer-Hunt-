@@ -1,4 +1,3 @@
-
 import { initializeApp, getApps, getApp } from "@firebase/app";
 import { 
     getFirestore, 
@@ -197,10 +196,23 @@ export const saveCollectionToFirebase = async (tgId: number, spawnId: string, va
         updates.tonBalance = increment(tonReward);
 
         switch (category) {
-            case 'URBAN': case 'MALL': updates.gameplayBalance = increment(value); break;
-            case 'LANDMARK': updates.rareBalance = increment(value); updates.rareItemsCollected = increment(1); break;
-            case 'EVENT': updates.eventBalance = increment(value); updates.eventItemsCollected = increment(1); break;
-            case 'MERCHANT': updates.merchantBalance = increment(value); updates.sponsoredAdsWatched = increment(1); break;
+            case 'URBAN': 
+            case 'MALL': 
+            case 'GIFTBOX': // FIX: GiftBox points are now correctly routed to gameplayBalance
+                updates.gameplayBalance = increment(value); 
+                break;
+            case 'LANDMARK': 
+                updates.rareBalance = increment(value); 
+                updates.rareItemsCollected = increment(1); 
+                break;
+            case 'EVENT': 
+                updates.eventBalance = increment(value); 
+                updates.eventItemsCollected = increment(1); 
+                break;
+            case 'MERCHANT': 
+                updates.merchantBalance = increment(value); 
+                updates.sponsoredAdsWatched = increment(1); 
+                break;
             case 'AD_REWARD': 
                 updates.dailySupplyBalance = increment(value); 
                 updates.adsWatched = increment(1);
