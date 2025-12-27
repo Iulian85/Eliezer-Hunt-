@@ -150,14 +150,13 @@ function App() {
                     photoUrl: tgUser.photo_url
                 }, defaultUserState, fingerprint, cloudId, tg.initData);
 
-                // LOGICA REFERAL: Verificăm imediat după sincronizare
+                // LOGICA REFERAL
                 const startParam = tg.initDataUnsafe.start_param || "";
                 if (startParam && startParam.startsWith('ref_') && !synced.hasClaimedReferral) {
                     const referrerId = startParam.replace('ref_', '');
                     if (referrerId !== userIdNum.toString()) {
                         const fullName = [tgUser.first_name, tgUser.last_name].filter(Boolean).join(' ');
                         const finalName = fullName || tgUser.username || `Hunter_${userIdNum}`;
-                        // Declanșăm procesul de reward
                         await processReferralReward(referrerId, userIdNum, finalName);
                     }
                 }
@@ -260,18 +259,18 @@ function App() {
     }, []);
 
     const handleResetAccount = async () => {
-        if (window.confirm("NUCLEAR RESET: Ștergi definitiv activitatea și reîncepi onboarding-ul? Această acțiune va curăța toate punctele din Wallet!")) {
+        if (window.confirm("RESET WALLET: Această acțiune va pune toate punctele la ZERO, dar va păstra profilul și accesul Admin. Ești sigur?")) {
             if (userState.telegramId) {
                 setIsLoading(true);
-                // 1. Apelăm Cloud Function pentru a purja DB
+                // 1. Resetează datele în Firebase (balanță 0, păstrează userul)
                 const result = await resetUserInFirebase(userState.telegramId);
                 if (result.success) {
-                    // 2. Curățăm identificatorii locali pentru a preveni re-sincronizarea imediată
+                    // 2. Curăță storage-ul Telegram (referali/progres cache)
                     await clearCloudStorageId();
-                    // 3. Forțăm reload pentru un mediu curat
+                    // 3. Reload pentru refresh balanță 0
                     window.location.reload();
                 } else {
-                    alert("Error during reset protocol: " + result.error);
+                    alert("Error: " + result.error);
                     setIsLoading(false);
                 }
             }

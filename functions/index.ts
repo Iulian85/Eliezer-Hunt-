@@ -12,8 +12,8 @@ if (getApps().length === 0) {
 const db = getFirestore();
 
 /**
- * PROTOCOL NUCLEAR RESET
- * Șterge complet identitatea utilizatorului și toate urmele de puncte/claims.
+ * PROTOCOL NUCLEAR RESET (SAFE FOR ADMIN)
+ * Resetează balanța și progresul, dar NU șterge documentul de utilizator.
  */
 export const resetUserProtocol = onCall(async (request) => {
     const { targetUserId } = request.data || {};
@@ -24,11 +24,30 @@ export const resetUserProtocol = onCall(async (request) => {
 
     try {
         const batch = db.batch();
+        const userRef = db.collection('users').doc(idStr);
         
-        // 1. Ștergem documentul principal (ID-ul documentului este string)
-        batch.delete(db.collection('users').doc(idStr));
+        // 1. RESETĂM câmpurile de balanță și progres (NU ȘTERGEM USERUL)
+        batch.update(userRef, {
+            balance: 0,
+            tonBalance: 0,
+            gameplayBalance: 0,
+            rareBalance: 0,
+            eventBalance: 0,
+            dailySupplyBalance: 0,
+            merchantBalance: 0,
+            referralBalance: 0,
+            referrals: 0,
+            referralNames: [],
+            collectedIds: [],
+            adsWatched: 0,
+            sponsoredAdsWatched: 0,
+            rareItemsCollected: 0,
+            eventItemsCollected: 0,
+            hasClaimedReferral: false,
+            lastActive: FieldValue.serverTimestamp()
+        });
 
-        // 2. Funcție pentru a purja colecțiile unde userId poate fi stocat ca String sau Number
+        // 2. Curățăm istoricul fizic pentru a preveni recalculări accidentale
         const purgeCollection = async (collName: string, fieldName: string) => {
             const snapStrings = await db.collection(collName).where(fieldName, '==', idStr).get();
             snapStrings.docs.forEach(d => batch.delete(d.ref));
@@ -39,7 +58,6 @@ export const resetUserProtocol = onCall(async (request) => {
             }
         };
 
-        // Curățăm tot istoricul care dă puncte
         await purgeCollection('claims', 'userId');
         await purgeCollection('ad_claims', 'userId');
         await purgeCollection('referral_claims', 'referredId');
@@ -47,9 +65,10 @@ export const resetUserProtocol = onCall(async (request) => {
         await purgeCollection('withdrawal_requests', 'userId');
 
         await batch.commit();
-        console.log(`[NUCLEAR RESET] Purged user ${idStr} and all associated extraction data.`);
+        console.log(`[RESET PROTOCOL] User ${idStr} zeroed out. Identity preserved.`);
         return { success: true };
     } catch (e: any) {
+        console.error("Reset Error:", e);
         throw new HttpsError('internal', e.message);
     }
 });
