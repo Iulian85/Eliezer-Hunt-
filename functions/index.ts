@@ -21,12 +21,10 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
     const claim = snap.data();
     const claimId = event.params.claimId;
     
-    console.log(`[START] Procesare Claim: ${claimId} pentru User: ${claim.userId}`);
-
-    // REPARARE ID: În screenshot userId este Number. Documentele au nevoie de String.
+    // REPARARE ID: În baza de date userId este Number. Documentele au nevoie de String.
     const rawUserId = claim.userId;
     if (!rawUserId) {
-        console.error("EROARE: userId lipsește din claim!");
+        console.error(`[ERROR] Claim ${claimId} nu are userId.`);
         return;
     }
     
@@ -39,7 +37,6 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
         const category = claim.category || 'URBAN';
         const spawnId = claim.spawnId;
 
-        // Pregătim datele pentru incrementare
         const userUpdate: any = {
             telegramId: Number(rawUserId),
             balance: FieldValue.increment(value),
@@ -47,12 +44,11 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
             lastActive: FieldValue.serverTimestamp()
         };
 
-        // Evităm duplicarea colectărilor pe hartă
         if (spawnId && !spawnId.startsWith('ad-')) {
             userUpdate.collectedIds = FieldValue.arrayUnion(spawnId);
         }
 
-        // ALOCARE PE CATEGORII (Daily Reward -> dailySupplyBalance)
+        // Alocare pe categorii de balanță
         if (category === 'AD_REWARD') {
             userUpdate.dailySupplyBalance = FieldValue.increment(value);
             userUpdate.adsWatched = FieldValue.increment(1);
@@ -70,39 +66,32 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
             userUpdate.gameplayBalance = FieldValue.increment(value);
         }
 
-        // REPARARE UTILIZATOR: Folosim .set({merge: true}) în loc de .update()
-        // Dacă documentul utilizatorului a fost șters manual, acesta este RECREAT automat aici.
+        // Setam documentul cu merge: true (il creeaza daca nu exista, il updateaza daca exista)
         await userRef.set(userUpdate, { merge: true });
 
-        // Marcăm claim-ul ca VERIFICAT
+        // Marcam claim-ul ca procesat
         await snap.ref.update({ 
             status: 'verified', 
-            processedAt: FieldValue.serverTimestamp(),
-            debug_info: "Allocated via updated trigger"
+            processedAt: FieldValue.serverTimestamp()
         });
 
-        console.log(`[SUCCESS] Claim ${claimId} procesat cu succes.`);
+        console.log(`[SUCCESS] Procesat ${value} ELZR pentru Hunter ${userIdStr}`);
 
     } catch (err: any) {
-        console.error(`[ERROR] Eșec la claim ${claimId}:`, err);
-        // Scriem eroarea în document ca să o poți vedea în consola Firebase (Dashboard)
-        await snap.ref.update({ 
-            status: 'error', 
-            errorMessage: err.message 
-        });
+        console.error(`[CRITICAL] Eroare la procesarea claim-ului ${claimId}:`, err);
+        await snap.ref.update({ status: 'error', errorMsg: err.message });
     }
 });
 
 /**
- * NUCLEAR RESET - Resetare totală pentru un utilizator
+ * RESETARE CONT (NUCLEAR RESET)
  */
 export const resetUserProtocol = onCall(async (request) => {
     const targetUserId = request.data?.targetUserId;
-    if (!targetUserId) throw new HttpsError('invalid-argument', 'Missing targetUserId');
+    if (!targetUserId) throw new HttpsError('invalid-argument', 'Target ID missing');
 
-    const idStr = String(targetUserId);
     try {
-        await db.collection('users').doc(idStr).set({
+        await db.collection('users').doc(String(targetUserId)).set({
             balance: 0,
             tonBalance: 0,
             gameplayBalance: 0,
@@ -112,9 +101,6 @@ export const resetUserProtocol = onCall(async (request) => {
             merchantBalance: 0,
             referralBalance: 0,
             collectedIds: [],
-            lastDailyClaim: 0,
-            adsWatched: 0,
-            sponsoredAdsWatched: 0,
             lastActive: FieldValue.serverTimestamp()
         });
         return { success: true };
@@ -124,20 +110,20 @@ export const resetUserProtocol = onCall(async (request) => {
 });
 
 /**
- * PROXY AI
+ * AI CORE PROXY
  */
 export const chatWithELZR = onCall(async (request) => {
     const { messages } = request.data || {};
-    if (!process.env.API_KEY) throw new HttpsError('failed-precondition', 'AI Node Disconnected');
+    if (!process.env.API_KEY) throw new HttpsError('failed-precondition', 'AI Node offline');
     try {
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
         const response = await ai.models.generateContent({
             model: 'gemini-3-flash-preview',
-            contents: messages.map((m: any) => ({ role: m.role, parts: [{ text: m.text.substring(0, 500) }] })),
+            contents: messages.map((m: any) => ({ role: m.role, parts: [{ text: m.text }] })),
             config: { systemInstruction: "You are ELZR System Scout.", temperature: 0.7 }
         });
         return { text: response.text };
     } catch (e: any) {
-        throw new HttpsError('internal', 'AI Core Error');
+        throw new HttpsError('internal', 'AI Core sync error');
     }
 });
