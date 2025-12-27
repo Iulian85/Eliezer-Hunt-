@@ -262,15 +262,20 @@ function App() {
         if (window.confirm("RESET WALLET: Această acțiune va pune toate punctele la ZERO, dar va păstra profilul și accesul Admin. Ești sigur?")) {
             if (userState.telegramId) {
                 setIsLoading(true);
-                // 1. Resetează datele în Firebase (balanță 0, păstrează userul)
-                const result = await resetUserInFirebase(userState.telegramId);
-                if (result.success) {
-                    // 2. Curăță storage-ul Telegram (referali/progres cache)
-                    await clearCloudStorageId();
-                    // 3. Reload pentru refresh balanță 0
-                    window.location.reload();
-                } else {
-                    alert("Error: " + result.error);
+                try {
+                    // 1. Resetează datele în Firebase (balanță 0, păstrează userul)
+                    const result = await resetUserInFirebase(userState.telegramId);
+                    if (result.success) {
+                        // 2. Curăță storage-ul Telegram (referali/progres cache)
+                        await clearCloudStorageId();
+                        // 3. Reload pentru refresh balanță 0
+                        window.location.reload();
+                    } else {
+                        alert("Error: " + result.error);
+                        setIsLoading(false);
+                    }
+                } catch (e: any) {
+                    alert("System Reset Error: " + e.message);
                     setIsLoading(false);
                 }
             }

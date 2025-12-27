@@ -12,38 +12,26 @@ if (getApps().length === 0) {
 const db = getFirestore();
 
 /**
- * FUNCȚIE AJUTĂTOARE PENTRU ȘTERGERE MASIVĂ (SAFE BATCH)
- */
-async function deleteQueryBatch(query: any) {
-    const snapshot = await query.get();
-    if (snapshot.empty) return;
-
-    const batchSize = 400; // Limita Firebase e 500, folosim 400 pt siguranță
-    const docs = snapshot.docs;
-    
-    for (let i = 0; i < docs.length; i += batchSize) {
-        const batch = db.batch();
-        const chunk = docs.slice(i, i + batchSize);
-        chunk.forEach((doc: any) => batch.delete(doc.ref));
-        await batch.commit();
-    }
-}
-
-/**
- * PROTOCOL RESET BALANȚĂ (SAFE FOR ADMIN)
+ * RESET PROTOCOL - FORȚARE ZERO (VITEZA MAXIMĂ)
  */
 export const resetUserProtocol = onCall(async (request) => {
     const targetUserId = request.data?.targetUserId;
     if (!targetUserId) throw new HttpsError('invalid-argument', 'ID utilizator lipsă.');
 
     const idStr = targetUserId.toString();
-    const idNum = parseInt(idStr);
 
     try {
-        console.log(`[RESET] Hunter vizat: ${idStr}`);
+        console.log(`[RESET START] Hunter: ${idStr}`);
         const userRef = db.collection('users').doc(idStr);
         
-        // 1. Resetăm PROFILUL (Balanța la zero) - Operațiune atomică
+        // Verificăm dacă userul există
+        const doc = await userRef.get();
+        if (!doc.exists) {
+            throw new HttpsError('not-found', 'Utilizatorul nu a fost găsit în baza de date.');
+        }
+
+        // RESETĂM TOATE CÂMPURILE LA ZERO / GOL
+        // Folosim set cu merge:true pentru a fi siguri că nu pierdem statusul de Admin sau alte setări de sistem
         await userRef.set({
             balance: 0,
             tonBalance: 0,
@@ -57,37 +45,20 @@ export const resetUserProtocol = onCall(async (request) => {
             sponsoredAdsWatched: 0,
             rareItemsCollected: 0,
             eventItemsCollected: 0,
-            collectedIds: [],
             referrals: 0,
             referralNames: [],
+            collectedIds: [],
             hasClaimedReferral: false,
             lastDailyClaim: 0,
             lastActive: FieldValue.serverTimestamp()
         }, { merge: true });
 
-        // 2. CURĂȚĂM ISTORICUL (Ștergere în calupuri sigure)
-        
-        // Claims simple (unde ești tu userId)
-        await deleteQueryBatch(db.collection('claims').where('userId', '==', idStr));
-        await deleteQueryBatch(db.collection('claims').where('userId', '==', idNum));
-        
-        // Ad Claims
-        await deleteQueryBatch(db.collection('ad_claims').where('userId', '==', idStr));
-        await deleteQueryBatch(db.collection('ad_claims').where('userId', '==', idNum));
-
-        // Referali (Trebuie șterse ambele direcții: cine te-a adus și pe cine ai adus)
-        await deleteQueryBatch(db.collection('referral_claims').where('referrerId', '==', idStr));
-        await deleteQueryBatch(db.collection('referral_claims').where('referredId', '==', idStr));
-        
-        // Cereri de retragere
-        await deleteQueryBatch(db.collection('withdrawal_requests').where('userId', '==', idStr));
-
-        console.log(`[RESET COMPLETE] Hunter ${idStr} a fost adus la zero.`);
+        console.log(`[RESET SUCCESS] Hunter ${idStr} este acum la zero.`);
         return { success: true };
 
     } catch (e: any) {
-        console.error("CRITICAL RESET ERROR:", e);
-        throw new HttpsError('internal', `Eroare server: ${e.message}`);
+        console.error("RESET ERROR:", e);
+        throw new HttpsError('internal', e.message || 'Eroare necunoscută la resetare');
     }
 });
 
