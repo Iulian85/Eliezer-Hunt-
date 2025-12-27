@@ -5,7 +5,7 @@ import {
     serverTimestamp, increment, deleteDoc, arrayUnion, addDoc
 } from "@firebase/firestore";
 import { getFunctions, httpsCallable } from "@firebase/functions";
-import { UserState, HotspotCategory, Coordinate } from "../types";
+import { UserState, HotspotCategory } from "../types";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -49,11 +49,10 @@ export const subscribeToUserProfile = (tgId: number, defaults: UserState, callba
     });
 };
 
-export const syncUserWithFirebase = async (userData: any, localState: UserState, fingerprint: string, cloudId: string): Promise<UserState> => {
+export const syncUserWithFirebase = async (userData: any, localState: UserState, fingerprint: string): Promise<UserState> => {
     if (!userData.id) return localState;
     const userIdStr = String(userData.id);
     const userDocRef = doc(db, "users", userIdStr);
-    const initData = window.Telegram?.WebApp?.initData || "";
     
     try {
         const userDoc = await getDoc(userDocRef);
@@ -61,8 +60,7 @@ export const syncUserWithFirebase = async (userData: any, localState: UserState,
             await updateDoc(userDocRef, { 
                 deviceFingerprint: fingerprint, 
                 lastActive: serverTimestamp(),
-                photoUrl: userData.photoUrl || '',
-                lastInitData: initData
+                photoUrl: userData.photoUrl || ''
             });
             return sanitizeUserData(userDoc.data(), localState);
         } else {
@@ -73,17 +71,8 @@ export const syncUserWithFirebase = async (userData: any, localState: UserState,
                 deviceFingerprint: fingerprint, 
                 joinedAt: serverTimestamp(), 
                 lastActive: serverTimestamp(),
-                lastInitData: initData,
-                balance: 0,
-                tonBalance: 0,
-                gameplayBalance: 0,
-                rareBalance: 0,
-                eventBalance: 0,
-                dailySupplyBalance: 0,
-                merchantBalance: 0,
-                referralBalance: 0,
-                collectedIds: [],
-                biometricEnabled: true
+                balance: 0, tonBalance: 0, gameplayBalance: 0, rareBalance: 0, eventBalance: 0, dailySupplyBalance: 0, merchantBalance: 0, referralBalance: 0,
+                collectedIds: [], biometricEnabled: true
             };
             await setDoc(userDocRef, newUser, { merge: true });
             return newUser;
@@ -92,26 +81,33 @@ export const syncUserWithFirebase = async (userData: any, localState: UserState,
 };
 
 /**
- * RECOMPENSĂ INSTANT: Chemăm funcția de server care face update-ul direct.
+ * RECOMPENSĂ INSTANTĂ (onCall) + FALLBACK (addDoc)
  */
-export const saveCollectionToFirebase = async (tgId: number, spawnId: string, clientValue: number, category?: HotspotCategory, tonReward: number = 0) => {
+export const saveCollectionToFirebase = async (tgId: number, spawnId: string, value: number, category?: HotspotCategory, tonReward: number = 0) => {
     if (!tgId) return;
     try {
-        const initData = window.Telegram?.WebApp?.initData || "";
+        // Încercăm apelul direct pentru viteză instantanee
         const secureClaimFunc = httpsCallable(functions, 'secureClaim');
-        // Aceasta este cheia: Executăm direct pe server, nu mai adăugăm doc în Firestore din client
-        await secureClaimFunc({ userId: tgId, spawnId, category, initData, tonReward });
-    } catch (e) { console.error("Claim Error:", e); }
+        await secureClaimFunc({ userId: tgId, spawnId, category, claimedValue: value, tonReward });
+    } catch (e) {
+        // DACĂ onCall eșuează (timeout sau cold start), scriem documentul 'pending'. 
+        // Trigger-ul de pe server îl va vedea și îl va procesa în câteva secunde.
+        await addDoc(collection(db, "claims"), {
+            userId: Number(tgId),
+            spawnId: String(spawnId),
+            claimedValue: Number(value),
+            tonReward: Number(tonReward),
+            category: category || "URBAN",
+            timestamp: serverTimestamp(),
+            status: "pending"
+        });
+    }
 };
 
-/**
- * REFERRAL INSTANT
- */
 export const processReferralReward = async (referrerId: string, userId: number, userName: string) => {
     try {
-        const initData = window.Telegram?.WebApp?.initData || "";
         const referralFunc = httpsCallable(functions, 'secureReferral');
-        await referralFunc({ referrerId, userId, userName, initData });
+        await referralFunc({ referrerId, userId, userName });
     } catch (e) { console.error("Referral Error:", e); }
 };
 
@@ -120,19 +116,7 @@ export const askGeminiProxy = async (messages: any[]) => {
         const chatFunc = httpsCallable(functions, 'chatWithELZR');
         const res: any = await chatFunc({ messages });
         return res.data;
-    } catch (e) { return { text: "AI Offline." }; }
-};
-
-export const resetUserInFirebase = async (targetUserId: number) => {
-    try {
-        const userRef = doc(db, "users", String(targetUserId));
-        await updateDoc(userRef, {
-            balance: 0, tonBalance: 0, gameplayBalance: 0, rareBalance: 0, 
-            eventBalance: 0, dailySupplyBalance: 0, merchantBalance: 0, 
-            referralBalance: 0, collectedIds: [], lastActive: serverTimestamp()
-        });
-        return { success: true };
-    } catch (e: any) { return { success: false, error: e.message }; }
+    } catch (e) { return { text: "Terminal offline." }; }
 };
 
 export const getLeaderboard = async () => {
@@ -145,28 +129,16 @@ export const getLeaderboard = async () => {
     }));
 };
 
+export const resetUserInFirebase = async (targetUserId: number) => {
+    const userRef = doc(db, "users", String(targetUserId));
+    await updateDoc(userRef, { balance: 0, tonBalance: 0, gameplayBalance: 0, rareBalance: 0, eventBalance: 0, dailySupplyBalance: 0, merchantBalance: 0, referralBalance: 0, collectedIds: [] });
+    return { success: true };
+};
+
 export const subscribeToCampaigns = (cb: any) => onSnapshot(collection(db, "campaigns"), snap => cb(snap.docs.map(d => ({id: d.id, ...d.data()}))));
 export const subscribeToHotspots = (cb: any) => onSnapshot(collection(db, "hotspots"), snap => cb(snap.docs.map(d => d.data())));
-export const subscribeToWithdrawalRequests = (cb: (reqs: any[]) => void) => {
-    const q = query(collection(db, "withdrawal_requests"), orderBy("timestamp", "desc"));
-    return onSnapshot(q, snap => cb(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
-};
-
-export const updateWithdrawalStatus = async (id: string, status: 'completed' | 'rejected', txHash?: string) => {
-    try {
-        const reqRef = doc(db, "withdrawal_requests", id);
-        const reqDoc = await getDoc(reqRef);
-        if (!reqDoc.exists()) return false;
-        const data = reqDoc.data();
-        await updateDoc(reqRef, { status, processedAt: serverTimestamp(), txHash: txHash || '' });
-        if (status === 'completed' && data.userId) {
-            const userRef = doc(db, "users", String(data.userId));
-            await updateDoc(userRef, { tonBalance: increment(-Number(data.amount)) });
-        }
-        return true;
-    } catch (e) { return false; }
-};
-
+export const subscribeToWithdrawalRequests = (cb: (reqs: any[]) => void) => onSnapshot(query(collection(db, "withdrawal_requests"), orderBy("timestamp", "desc")), snap => cb(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+export const updateWithdrawalStatus = async (id: string, status: string) => updateDoc(doc(db, "withdrawal_requests", id), { status, processedAt: serverTimestamp() });
 export const saveHotspotFirebase = async (h: any) => setDoc(doc(db, "hotspots", h.id), h);
 export const deleteHotspotFirebase = async (id: string) => deleteDoc(doc(db, "hotspots", id));
 export const deleteUserFirebase = async (id: string) => deleteDoc(doc(db, "users", id));
@@ -178,15 +150,10 @@ export const deleteCampaignFirebase = async (id: string) => deleteDoc(doc(db, "c
 export const updateUserWalletInFirebase = async (id: number, w: string) => updateDoc(doc(db, "users", String(id)), { walletAddress: w });
 export const getAllUsersAdmin = async () => (await getDocs(collection(db, "users"))).docs.map(d => ({id: d.id, ...d.data()}));
 export const processWithdrawTON = async (tgId: number, amount: number) => {
-    try {
-        await addDoc(collection(db, "withdrawal_requests"), { userId: Number(tgId), amount: Number(amount), status: "pending", timestamp: serverTimestamp() });
-        return true;
-    } catch (e) { return false; }
+    await addDoc(collection(db, "withdrawal_requests"), { userId: Number(tgId), amount: Number(amount), status: "pending", timestamp: serverTimestamp() });
+    return true;
 };
 export const markUserAirdropped = async (id: string, allocation: number) => {
-    try {
-        const userRef = doc(db, "users", String(id));
-        await updateDoc(userRef, { isAirdropped: true, airdropAllocation: allocation, airdropTimestamp: serverTimestamp() });
-        return true;
-    } catch (e) { return false; }
+    await updateDoc(doc(db, "users", String(id)), { isAirdropped: true, airdropAllocation: allocation, airdropTimestamp: serverTimestamp() });
+    return true;
 };

@@ -152,7 +152,8 @@ function App() {
                 }
 
                 // Note: getCloudStorageId removed to match former code sync logic
-                const synced = await syncUserWithFirebase(userData, defaultUserState, fingerprint, "legacy_id");
+                // FIX: Removed extra argument "legacy_id" to match function signature in services/firebase.ts
+                const synced = await syncUserWithFirebase(userData, defaultUserState, fingerprint);
                 setUserState(prev => ({ ...prev, ...synced }));
 
                 if (!synced.deviceFingerprint || synced.joinedAt === synced.lastActive) {
