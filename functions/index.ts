@@ -13,7 +13,7 @@ const db = getFirestore();
 
 /**
  * TRIGGER PROCESARE COLECTĂRI
- * Acesta este "creierul" care mută punctele din 'claims' (pending) în 'users' (balanță reală).
+ * Mută punctele din 'claims' (status pending) în balanța reală a utilizatorului.
  */
 export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event) => {
     const snap = event.data;
@@ -21,12 +21,12 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
     const claim = snap.data();
     const claimId = event.params.claimId;
     
-    console.log(`[LOG] Procesare începută pentru Claim: ${claimId}`);
+    console.log(`[START] Procesare Claim: ${claimId} pentru User: ${claim.userId}`);
 
-    // VALIDARE USER ID - Forțăm convertirea în String (Esențial pentru document path)
+    // REPARARE ID: În screenshot userId este Number. Documentele au nevoie de String.
     const rawUserId = claim.userId;
     if (!rawUserId) {
-        console.error("EROARE CRITICĂ: Documentul claim nu are userId!");
+        console.error("EROARE: userId lipsește din claim!");
         return;
     }
     
@@ -39,8 +39,7 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
         const category = claim.category || 'URBAN';
         const spawnId = claim.spawnId;
 
-        // Obiectul de update pentru utilizator
-        // Folosim FieldValue.increment pentru a asigura calcule matematice atomice pe server
+        // Pregătim datele pentru incrementare
         const userUpdate: any = {
             telegramId: Number(rawUserId),
             balance: FieldValue.increment(value),
@@ -48,12 +47,12 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
             lastActive: FieldValue.serverTimestamp()
         };
 
-        // Istoric colectări
+        // Evităm duplicarea colectărilor pe hartă
         if (spawnId && !spawnId.startsWith('ad-')) {
             userUpdate.collectedIds = FieldValue.arrayUnion(spawnId);
         }
 
-        // REPARTIZARE PE CATEGORII (Pentru vizualizarea corectă în Wallet)
+        // ALOCARE PE CATEGORII (Daily Reward -> dailySupplyBalance)
         if (category === 'AD_REWARD') {
             userUpdate.dailySupplyBalance = FieldValue.increment(value);
             userUpdate.adsWatched = FieldValue.increment(1);
@@ -68,34 +67,34 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
             userUpdate.eventBalance = FieldValue.increment(value);
             userUpdate.eventItemsCollected = FieldValue.increment(1);
         } else {
-            // Implicit: URBAN / MALL / GIFTBOX
             userUpdate.gameplayBalance = FieldValue.increment(value);
         }
 
-        /**
-         * FIX CHEIE: .set(..., { merge: true }) 
-         * Spre deosebire de .update(), acesta CREAZĂ documentul dacă lipsește.
-         * Dacă ai șters userul manual, acesta va fi recreat cu punctele primite.
-         */
+        // REPARARE UTILIZATOR: Folosim .set({merge: true}) în loc de .update()
+        // Dacă documentul utilizatorului a fost șters manual, acesta este RECREAT automat aici.
         await userRef.set(userUpdate, { merge: true });
 
-        // Marcăm claim-ul ca fiind VERIFICAT (va dispărea din pending logic)
+        // Marcăm claim-ul ca VERIFICAT
         await snap.ref.update({ 
             status: 'verified', 
-            processedAt: FieldValue.serverTimestamp() 
+            processedAt: FieldValue.serverTimestamp(),
+            debug_info: "Allocated via updated trigger"
         });
 
-        console.log(`[SUCCESS] User ${userIdStr} a primit ${value} puncte in categoria ${category}`);
+        console.log(`[SUCCESS] Claim ${claimId} procesat cu succes.`);
 
     } catch (err: any) {
-        console.error(`[FATAL] Eroare la procesarea claim-ului ${claimId}:`, err);
-        // Notăm eroarea în document ca să o vezi în consola Firebase
-        await snap.ref.update({ status: 'error', errorMessage: err.message });
+        console.error(`[ERROR] Eșec la claim ${claimId}:`, err);
+        // Scriem eroarea în document ca să o poți vedea în consola Firebase (Dashboard)
+        await snap.ref.update({ 
+            status: 'error', 
+            errorMessage: err.message 
+        });
     }
 });
 
 /**
- * RESETARE CONT (NUCLEAR)
+ * NUCLEAR RESET - Resetare totală pentru un utilizator
  */
 export const resetUserProtocol = onCall(async (request) => {
     const targetUserId = request.data?.targetUserId;

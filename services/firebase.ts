@@ -138,8 +138,6 @@ export const syncUserWithFirebase = async (userData: any, localState: UserState,
 export const saveCollectionToFirebase = async (tgId: number, spawnId: string, value: number, category?: HotspotCategory, tonReward: number = 0) => {
     if (!tgId) return;
     try {
-        // Trimitem userId exact așa cum apare în screenshot (ca Number)
-        // Backend trigger-ul actualizat va face conversia necesară.
         await addDoc(collection(db, "claims"), { 
             userId: Number(tgId), 
             spawnId: String(spawnId), 
