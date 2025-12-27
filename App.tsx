@@ -110,7 +110,6 @@ function App() {
         const initUser = async () => {
             const tg = window.Telegram?.WebApp;
             
-            // Strict environment check: Must have Telegram object and valid user data
             if (!tg || !tg.initDataUnsafe || !tg.initDataUnsafe.user) {
                 setIsTelegram(false);
                 setIsLoading(false);
@@ -121,7 +120,6 @@ function App() {
             tg.expand();
             setIsTelegram(true);
 
-            // Native Telegram Biometric Manager Initialization
             if (tg.BiometricManager) {
                 tg.BiometricManager.init(() => {
                     setBiometricSupported(tg.BiometricManager.available);
@@ -151,6 +149,7 @@ function App() {
                     console.warn("Fingerprint detection timeout");
                 }
 
+                // FIX: Sincronizam folosind argumentele acceptate de serviciu
                 const synced = await syncUserWithFirebase(userData, defaultUserState, fingerprint);
                 setUserState(prev => ({ ...prev, ...synced }));
 
@@ -172,7 +171,8 @@ function App() {
                     }
                 }
 
-                subscribeToUserProfile(parseInt(userId), (updatedData) => {
+                // FIX: Adaugat defaultUserState ca al doilea argument conform serviciului
+                subscribeToUserProfile(parseInt(userId), defaultUserState, (updatedData) => {
                     setUserState(prev => ({ ...prev, ...updatedData }));
                     if (updatedData.isBanned) setIsBlocked(true);
                 });
@@ -189,7 +189,6 @@ function App() {
     }, []);
 
     const handleUnlock = async () => {
-        // Bypass for biometric disabled users
         if (userState.biometricEnabled === false) {
             setIsUnlocked(true);
             return;
@@ -300,7 +299,6 @@ function App() {
         );
     }
 
-    // Restriction screen for non-Telegram environments
     if (!isTelegram) {
         return (
             <div className="h-screen w-screen bg-[#020617] flex flex-col items-center justify-center p-8 text-center relative overflow-hidden">
@@ -334,7 +332,6 @@ function App() {
         );
     }
 
-    // Security screen - Bypassable only by the Global Admin to allow fixing user settings
     if (isBlocked && !isAdmin) {
         return (
             <div className="h-screen w-screen bg-slate-950 flex flex-col items-center justify-center p-8 text-center">
@@ -355,7 +352,6 @@ function App() {
         );
     }
 
-    // Allow Admin to skip biometric unlock if they are on a blocked device to fix things
     if (!isUnlocked && (!isBlocked || !isAdmin)) {
         return (
             <div className="h-screen w-screen bg-[#020617] flex flex-col items-center justify-center p-8 relative overflow-hidden">
