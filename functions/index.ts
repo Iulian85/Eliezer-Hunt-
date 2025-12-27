@@ -14,6 +14,50 @@ const db = getFirestore();
 const ADMIN_TELEGRAM_ID = 7319782429;
 
 /**
+ * TRIGGER: Procesare referali (FRENS)
+ * Acordă 50 puncte referrer-ului și 50 puncte noului user.
+ */
+export const onReferralClaimCreated = onDocumentCreated('referral_claims/{claimId}', async (event) => {
+    const snap = event.data;
+    if (!snap) return;
+    const claim = snap.data();
+    
+    const referrerId = claim.referrerId.toString();
+    const referredId = claim.referredId.toString();
+    const referredName = claim.referredName || "New Hunter";
+
+    try {
+        const batch = db.batch();
+
+        // 1. Update Referrer (cel care a invitat)
+        const referrerRef = db.collection('users').doc(referrerId);
+        batch.set(referrerRef, {
+            balance: FieldValue.increment(50),
+            referralBalance: FieldValue.increment(50),
+            referrals: FieldValue.increment(1),
+            referralNames: FieldValue.arrayUnion(referredName),
+            lastActive: FieldValue.serverTimestamp()
+        }, { merge: true });
+
+        // 2. Update Referred (noul utilizator - bonus de bun venit)
+        const referredRef = db.collection('users').doc(referredId);
+        batch.set(referredRef, {
+            balance: FieldValue.increment(50),
+            gameplayBalance: FieldValue.increment(50),
+            hasClaimedReferral: true,
+            lastActive: FieldValue.serverTimestamp()
+        }, { merge: true });
+
+        await batch.commit();
+        await snap.ref.update({ status: 'processed', processedAt: FieldValue.serverTimestamp() });
+
+    } catch (err) {
+        console.error("Referral Processing Failed:", err);
+        await snap.ref.update({ status: 'error', error: String(err) });
+    }
+});
+
+/**
  * PROTOCOL NUCLEAR RESET - ADMIN ONLY
  */
 export const resetUserProtocol = onCall(async (request) => {
@@ -72,7 +116,6 @@ export const resetUserProtocol = onCall(async (request) => {
 
 /**
  * TRIGGER: Procesare monede colectate (MAP/HUNT/GIFTBOX/ADS)
- * REZOLVARE: Verifică unicitatea pentru Landmark, Event și GiftBox în backend.
  */
 export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event) => {
     const snap = event.data;
@@ -84,14 +127,12 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
     const category = claim.category;
     const userRef = db.collection('users').doc(userIdStr);
     
-    // Verificăm dacă este un item care trebuie să fie unic
     const isUniqueCategory = ['LANDMARK', 'EVENT', 'GIFTBOX'].includes(category);
 
     try {
         const userDoc = await userRef.get();
         const userData = userDoc.data();
 
-        // Dacă item-ul a fost deja colectat, marcăm claim-ul ca invalid și ne oprim
         if (isUniqueCategory && spawnId && userData?.collectedIds?.includes(spawnId)) {
             console.warn(`Attempted duplicate claim for unique item: ${spawnId} by user ${userIdStr}`);
             await snap.ref.update({ status: 'rejected_duplicate', processedAt: FieldValue.serverTimestamp() });
@@ -108,7 +149,6 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
             lastActive: FieldValue.serverTimestamp()
         };
 
-        // Adăugăm ID-ul în lista de colectate
         if (spawnId && !spawnId.startsWith('ad-')) {
             updates.collectedIds = FieldValue.arrayUnion(spawnId);
         }

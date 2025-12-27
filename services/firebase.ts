@@ -1,3 +1,4 @@
+
 import { initializeApp, getApps, getApp } from "@firebase/app";
 import { 
     getFirestore, 
@@ -168,7 +169,6 @@ export const saveCollectionToFirebase = async (tgId: number, spawnId: string, va
     const userRef = doc(db, "users", tgId.toString());
 
     try {
-        // Înregistrăm colectarea pentru procesare backend
         await addDoc(collection(db, "claims"), {
             userId: Number(tgId),
             spawnId,
@@ -181,24 +181,21 @@ export const saveCollectionToFirebase = async (tgId: number, spawnId: string, va
             cloudId: cloudId
         });
 
-        // Actualizăm profilul utilizatorului
         const updates: any = {
             lastActive: serverTimestamp()
         };
 
-        // Adăugăm ID-ul în colecția de colectate pentru a preveni reapariția
         if (spawnId && !spawnId.startsWith('ad-')) {
             updates.collectedIds = arrayUnion(spawnId);
         }
 
-        // Incrementăm local balanțele pentru feedback instant
         updates.balance = increment(value);
         updates.tonBalance = increment(tonReward);
 
         switch (category) {
             case 'URBAN': 
             case 'MALL': 
-            case 'GIFTBOX': // FIX: GiftBox points are now correctly routed to gameplayBalance
+            case 'GIFTBOX': 
                 updates.gameplayBalance = increment(value); 
                 break;
             case 'LANDMARK': 
@@ -233,19 +230,21 @@ export const requestAdRewardFirebase = async (tgId: number, rewardValue: number)
 
 export const processReferralReward = async (referrerId: string, newUserId: number, newUserName: string) => {
     try {
+        // Înregistrăm referalul. Trigger-ul de backend onReferralClaimCreated se va ocupa de restul.
         await addDoc(collection(db, "referral_claims"), {
-            referrerId,
+            referrerId: referrerId.toString(),
             referredId: Number(newUserId),
             referredName: newUserName,
             timestamp: serverTimestamp(),
-            status: "verified"
+            status: "pending"
         });
         
+        // Marcăm local utilizatorul că a folosit un referal pentru a preveni buclele
         await updateDoc(doc(db, "users", newUserId.toString()), {
             hasClaimedReferral: true
         });
     } catch (e) {
-        console.error("Referral error", e);
+        console.error("Referral process error", e);
     }
 };
 
@@ -292,7 +291,9 @@ export const resetUserInFirebase = async (targetUserId: number): Promise<{succes
             merchantBalance: 0,
             referralBalance: 0,
             collectedIds: [],
-            lastDailyClaim: 0
+            lastDailyClaim: 0,
+            referrals: 0,
+            referralNames: []
         });
         return { success: true };
     } catch (e: any) {
