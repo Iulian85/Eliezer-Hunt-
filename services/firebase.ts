@@ -1,3 +1,4 @@
+
 import { initializeApp, getApps, getApp } from "@firebase/app";
 import { 
     getFirestore, 
@@ -85,7 +86,8 @@ export const subscribeToUserProfile = (tgId: number, defaults: UserState, callba
     });
 };
 
-export const syncUserWithFirebase = async (userData: any, localState: UserState, fingerprint: string, cloudId: string): Promise<UserState> => {
+// Fix: Updated syncUserWithFirebase signature to accept 5 arguments to match the call in App.tsx
+export const syncUserWithFirebase = async (userData: any, localState: UserState, fingerprint: string, cloudId: string, initData?: string): Promise<UserState> => {
     if (!userData.id) return localState;
     const userIdStr = String(userData.id);
     const userDocRef = doc(db, "users", userIdStr);
@@ -98,7 +100,9 @@ export const syncUserWithFirebase = async (userData: any, localState: UserState,
                 cloudStorageId: cloudId, 
                 deviceFingerprint: fingerprint, 
                 lastActive: serverTimestamp(),
-                photoUrl: userData.photoUrl || ''
+                photoUrl: userData.photoUrl || '',
+                // Security: Store lastInitData for server-side verification if needed
+                lastInitData: initData || ''
             });
             return sanitizeUserData(data, localState);
         } else {
@@ -118,7 +122,8 @@ export const syncUserWithFirebase = async (userData: any, localState: UserState,
                 referralBalance: 0, 
                 collectedIds: [], 
                 joinedAt: serverTimestamp(), 
-                lastActive: serverTimestamp() 
+                lastActive: serverTimestamp(),
+                lastInitData: initData || ''
             };
             await setDoc(userDocRef, newUser);
             return newUser;
@@ -134,68 +139,4 @@ export const saveCollectionToFirebase = async (tgId: number, spawnId: string, va
             userId: Number(tgId), 
             spawnId: String(spawnId), 
             claimedValue: Number(value), 
-            tonReward: Number(tonReward), 
-            category: category || "URBAN" 
-        });
-    } catch (e) { console.error("Secure Save Error:", e); }
-};
-
-export const processReferralReward = async (referrerId: string, userId: number, userName: string) => {
-    try {
-        const referrerRef = doc(db, "users", String(referrerId));
-        const referrerDoc = await getDoc(referrerRef);
-        if (referrerDoc.exists()) {
-            await updateDoc(referrerRef, {
-                balance: increment(50),
-                referralBalance: increment(50),
-                referrals: increment(1),
-                referralNames: arrayUnion(userName)
-            });
-            await updateDoc(doc(db, "users", String(userId)), { hasClaimedReferral: true });
-        }
-    } catch (e) { console.error("Referral Error:", e); }
-};
-
-export const askGeminiProxy = async (messages: any[]) => {
-    const chatFunc = httpsCallable(functions, 'chatWithELZR');
-    const res: any = await chatFunc({ messages });
-    return res.data;
-};
-
-export const resetUserInFirebase = async (targetUserId: number): Promise<{success: boolean, error?: string}> => {
-    try {
-        const resetFunc = httpsCallable(functions, 'resetUserProtocol');
-        const res: any = await resetFunc({ targetUserId: Number(targetUserId) });
-        return { success: !!(res.data as any)?.success };
-    } catch (e: any) { return { success: false, error: e.message }; }
-};
-
-export const getLeaderboard = async () => {
-    const q = query(collection(db, "users"), orderBy("balance", "desc"), limit(50));
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map((docSnap, index) => ({ 
-        rank: index + 1, 
-        username: (docSnap.data() as any).username || "Hunter", 
-        score: Number((docSnap.data() as any).balance || 0) 
-    }));
-};
-
-export const subscribeToCampaigns = (cb: any) => onSnapshot(collection(db, "campaigns"), snap => cb(snap.docs.map(d => d.data())));
-export const subscribeToHotspots = (cb: any) => onSnapshot(collection(db, "hotspots"), snap => cb(snap.docs.map(d => d.data())));
-export const saveHotspotFirebase = async (h: any) => setDoc(doc(db, "hotspots", h.id), h);
-export const deleteHotspotFirebase = async (id: string) => deleteDoc(doc(db, "hotspots", id));
-export const deleteUserFirebase = async (id: string) => deleteDoc(doc(db, "users", id));
-export const toggleUserBan = async (id: string, b: boolean) => updateDoc(doc(db, "users", String(id)), { isBanned: b });
-export const toggleUserBiometricSetting = async (id: string, b: boolean) => updateDoc(doc(db, "users", String(id)), { biometricEnabled: b });
-export const createCampaignFirebase = async (c: any) => setDoc(doc(db, "campaigns", c.id), c);
-export const updateCampaignStatusFirebase = async (id: string, s: string) => updateDoc(doc(db, "campaigns", id), { "data.status": s });
-export const deleteCampaignFirebase = async (id: string) => deleteDoc(doc(db, "campaigns", id));
-export const updateUserWalletInFirebase = async (id: number, w: string) => updateDoc(doc(db, "users", String(id)), { walletAddress: w });
-export const getAllUsersAdmin = async () => (await getDocs(collection(db, "users"))).docs.map(d => ({id: d.id, ...d.data()}));
-export const processWithdrawTON = async (tgId: number, amount: number) => {
-    await addDoc(collection(db, "withdrawal_requests"), { userId: Number(tgId), amount: Number(amount), status: "pending", timestamp: serverTimestamp() });
-    return true;
-};
-function addDoc(arg0: any, arg1: { userId: number; amount: number; status: string; timestamp: any; }) {
-    throw new Error("Function not implemented.");
-}
+            tonReward: Number(ton
