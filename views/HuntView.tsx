@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { Coordinate, SpawnPoint, HotspotDefinition } from '../types';
 import { getDistance } from '../utils';
@@ -36,6 +37,7 @@ export const HuntView: React.FC<HuntViewProps> = ({ location, spawns, collectedI
         return [...spawns, ...hotspotSpawns];
     }, [spawns, hotspots]);
 
+    // Actualizăm mereu cea mai apropiată țintă, dar nu închidem AR-ul automat
     useEffect(() => {
         let closest: SpawnPoint | null = null;
         let minDesc = Infinity;
@@ -50,16 +52,14 @@ export const HuntView: React.FC<HuntViewProps> = ({ location, spawns, collectedI
             }
         });
 
-        if (closest) {
-            setNearestSpawn({ spawn: closest, dist: minDesc });
-        } else {
-            if (!arMode) setNearestSpawn(null);
-        }
-    }, [location, allAvailableTargets, collectedIds, arMode]);
+        // Dacă nu mai sunt monede, nearestSpawn devine null, iar ARView va afișa "Searching..."
+        setNearestSpawn(closest ? { spawn: closest, dist: minDesc } : null);
+    }, [location, allAvailableTargets, collectedIds]);
 
     const handleARCollect = (points: number, tonReward: number = 0) => {
         if (nearestSpawn) {
             onCollect(nearestSpawn.spawn.id, points, nearestSpawn.spawn.category, tonReward);
+            // NU setăm arMode(false) aici! Rămânem în AR pentru vânătoare continuă.
         }
     };
 
@@ -81,22 +81,16 @@ export const HuntView: React.FC<HuntViewProps> = ({ location, spawns, collectedI
                 </div>
             </header>
             
-            {/* RADAR UI - Compact Size 48 for one-screen fit */}
             <div className="relative w-48 h-48 mb-6 shrink-0 flex items-center justify-center">
                 <div className="absolute inset-0 rounded-full border-2 border-slate-800/40"></div>
                 <div className="absolute inset-[15%] rounded-full border border-slate-800/40"></div>
                 <div className="absolute inset-[30%] rounded-full border border-slate-800/40"></div>
                 <div className="absolute top-1/2 left-0 right-0 h-[1px] bg-slate-800/40"></div>
                 <div className="absolute left-1/2 top-0 bottom-0 w-[1px] bg-slate-800/40"></div>
-                
-                {/* SCANNER LINE */}
                 <div className="absolute inset-0 rounded-full bg-gradient-to-tr from-cyan-500/0 via-cyan-500/0 to-cyan-500/20 animate-spin-slow"></div>
-                
                 <div className={`relative z-10 w-14 h-14 rounded-full bg-slate-900 border-2 flex items-center justify-center transition-all duration-500 shadow-[0_0_30px_rgba(6,182,212,0.1)] ${nearestSpawn ? 'border-cyan-500' : 'border-slate-800'}`}>
                     <TargetIcon className={nearestSpawn ? "text-cyan-400 animate-pulse" : "text-slate-700"} size={28} />
                 </div>
-
-                {/* RANDOM BLIPS */}
                 {!nearestSpawn && (
                     <>
                         <div className="absolute top-8 right-16 w-1 h-1 bg-cyan-500/40 rounded-full animate-ping"></div>
@@ -107,7 +101,6 @@ export const HuntView: React.FC<HuntViewProps> = ({ location, spawns, collectedI
 
             {nearestSpawn ? (
                 <div className={`w-full max-w-sm bg-slate-900/70 backdrop-blur-2xl border-2 rounded-[1.5rem] p-4 shadow-2xl relative z-10 animate-in slide-in-from-bottom-8 duration-700 ${nearestSpawn.spawn.category === 'EVENT' ? 'border-green-500/40 shadow-green-900/20' : (nearestSpawn.spawn.category === 'MERCHANT' ? 'border-red-500/40 shadow-red-900/20' : nearestSpawn.spawn.isLandmark ? 'border-amber-400/40' : 'border-slate-700/50')}`}>
-                    
                     <div className="flex justify-between items-start mb-3">
                         <div className="flex items-center gap-3">
                             <div className="relative">
@@ -146,15 +139,7 @@ export const HuntView: React.FC<HuntViewProps> = ({ location, spawns, collectedI
                         </div>
                     </div>
 
-                    <button 
-                        onClick={() => setArMode(true)} 
-                        className={`w-full py-3 font-black rounded-xl shadow-xl transform active:scale-95 transition-all flex items-center justify-center gap-3 text-[9px] uppercase tracking-[0.2em]
-                            ${nearestSpawn.dist < 200 
-                                ? "bg-white text-black hover:bg-slate-200" 
-                                : "bg-slate-800 text-slate-500 border border-slate-700 cursor-default"
-                            }
-                        `}
-                    >
+                    <button onClick={() => setArMode(true)} className={`w-full py-3 font-black rounded-xl shadow-xl transform active:scale-95 transition-all flex items-center justify-center gap-3 text-[9px] uppercase tracking-[0.2em] ${nearestSpawn.dist < 200 ? "bg-white text-black hover:bg-slate-200" : "bg-slate-800 text-slate-500 border border-slate-700 cursor-default"}`}>
                         <Rocket size={14} className={nearestSpawn.dist < 200 ? "animate-bounce" : ""} /> 
                         {nearestSpawn.dist < 200 ? "Initiate AR Extraction" : "Out of Range"}
                     </button>
@@ -172,13 +157,8 @@ export const HuntView: React.FC<HuntViewProps> = ({ location, spawns, collectedI
             )}
             
             <style>{`
-                @keyframes spin-slow {
-                    from { transform: rotate(0deg); }
-                    to { transform: rotate(360deg); }
-                }
-                .animate-spin-slow {
-                    animation: spin-slow 8s linear infinite;
-                }
+                @keyframes spin-slow { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+                .animate-spin-slow { animation: spin-slow 8s linear infinite; }
             `}</style>
         </div>
     );
