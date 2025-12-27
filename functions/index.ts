@@ -11,21 +11,17 @@ if (getApps().length === 0) {
 
 const db = getFirestore();
 
-const ADMIN_TELEGRAM_ID = 7319782429;
-
 /**
- * PROTOCOL NUCLEAR RESET - ADMIN ONLY
+ * PROTOCOL NUCLEAR RESET
  */
 export const resetUserProtocol = onCall(async (request) => {
-    const { targetUserId, fingerprint, cloudUuid } = request.data || {};
+    const targetUserId = request.data?.targetUserId;
     if (!targetUserId) throw new HttpsError('invalid-argument', 'Missing targetUserId');
 
     const idStr = targetUserId.toString();
-    if (parseInt(idStr) !== ADMIN_TELEGRAM_ID) {
-        throw new HttpsError('permission-denied', 'Restricted to System Administrator');
-    }
-
     try {
+        const userRef = db.collection('users').doc(idStr);
+        
         const resetPayload = {
             balance: 0,
             tonBalance: 0,
@@ -36,71 +32,45 @@ export const resetUserProtocol = onCall(async (request) => {
             merchantBalance: 0,
             referralBalance: 0,
             collectedIds: [],
-            referralNames: [],
-            hasClaimedReferral: false,
-            lastAdWatch: 0,
             lastDailyClaim: 0,
             adsWatched: 0,
             sponsoredAdsWatched: 0,
-            rareItemsCollected: 0,
-            eventItemsCollected: 0,
-            referrals: 0,
-            deviceFingerprint: fingerprint || FieldValue.delete(), 
-            cloudStorageId: cloudUuid || FieldValue.delete(),
             lastActive: FieldValue.serverTimestamp()
         };
 
-        await db.collection('users').doc(idStr).set(resetPayload, { merge: true });
+        // Folosim SET cu merge: true pentru a asigura crearea dacă nu există
+        await userRef.set(resetPayload, { merge: true });
 
-        const purgeHistory = async (col: string, field: string) => {
-            const snap = await db.collection(col).where(field, 'in', [idStr, parseInt(idStr)]).get();
-            if (snap.empty) return;
-            const batch = db.batch();
-            snap.docs.forEach(doc => batch.delete(doc.ref));
-            await batch.commit();
-        };
-
-        await purgeHistory('claims', 'userId');
-        await purgeHistory('ad_claims', 'userId');
-        await purgeHistory('referral_claims', 'referrerId');
-
-        return { success: true, message: "ADMIN_IDENTITY_PURGED" };
+        return { success: true };
     } catch (e: any) {
         throw new HttpsError('internal', e.message);
     }
 });
 
 /**
- * TRIGGER: Procesare monede colectate (MAP/HUNT/GIFTBOX/ADS)
- * REZOLVARE: Verifică unicitatea pentru Landmark, Event și GiftBox în backend.
+ * TRIGGER: Procesare colectări (MAP/HUNT/ADS)
+ * Această funcție transformă statusul din 'pending' în 'verified' și adaugă punctele în balanță.
  */
 export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event) => {
     const snap = event.data;
     if (!snap) return;
     const claim = snap.data();
     
+    if (!claim.userId) {
+        console.error("Trigger error: claim missing userId");
+        return;
+    }
+
     const userIdStr = claim.userId.toString();
     const spawnId = claim.spawnId;
-    const category = claim.category;
+    const category = claim.category || 'URBAN';
     const userRef = db.collection('users').doc(userIdStr);
-    
-    // Verificăm dacă este un item care trebuie să fie unic
-    const isUniqueCategory = ['LANDMARK', 'EVENT', 'GIFTBOX'].includes(category);
 
     try {
-        const userDoc = await userRef.get();
-        const userData = userDoc.data();
-
-        // Dacă item-ul a fost deja colectat, marcăm claim-ul ca invalid și ne oprim
-        if (isUniqueCategory && spawnId && userData?.collectedIds?.includes(spawnId)) {
-            console.warn(`Attempted duplicate claim for unique item: ${spawnId} by user ${userIdStr}`);
-            await snap.ref.update({ status: 'rejected_duplicate', processedAt: FieldValue.serverTimestamp() });
-            return;
-        }
-
         const value = Number(claim.claimedValue || 0);
         const tonValue = Number(claim.tonReward || 0);
 
+        // Pregătim obiectul de update
         const updates: any = {
             telegramId: Number(claim.userId),
             balance: FieldValue.increment(value),
@@ -108,30 +78,29 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
             lastActive: FieldValue.serverTimestamp()
         };
 
-        // Adăugăm ID-ul în lista de colectate
+        // Adăugăm ID-ul în istoricul de colectate (dacă nu e reclamă zilnică generică)
         if (spawnId && !spawnId.startsWith('ad-')) {
             updates.collectedIds = FieldValue.arrayUnion(spawnId);
         }
 
+        // Logică specifică pe categorii
         switch (category) {
-            case 'URBAN': 
-            case 'MALL': 
-                updates.gameplayBalance = FieldValue.increment(value); 
-                break;
-            case 'LANDMARK': 
-                updates.rareBalance = FieldValue.increment(value); 
-                updates.rareItemsCollected = FieldValue.increment(1);
-                break;
-            case 'EVENT': 
-                updates.eventBalance = FieldValue.increment(value); 
-                updates.eventItemsCollected = FieldValue.increment(1);
-                break;
-            case 'MERCHANT': 
-                updates.merchantBalance = FieldValue.increment(value); 
-                updates.sponsoredAdsWatched = FieldValue.increment(1);
-                break;
+            case 'URBAN':
+            case 'MALL':
             case 'GIFTBOX':
                 updates.gameplayBalance = FieldValue.increment(value);
+                break;
+            case 'LANDMARK':
+                updates.rareBalance = FieldValue.increment(value);
+                updates.rareItemsCollected = FieldValue.increment(1);
+                break;
+            case 'EVENT':
+                updates.eventBalance = FieldValue.increment(value);
+                updates.eventItemsCollected = FieldValue.increment(1);
+                break;
+            case 'MERCHANT':
+                updates.merchantBalance = FieldValue.increment(value);
+                updates.sponsoredAdsWatched = FieldValue.increment(1);
                 break;
             case 'AD_REWARD':
                 updates.dailySupplyBalance = FieldValue.increment(value);
@@ -140,49 +109,76 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
                 break;
         }
 
+        /**
+         * CRITICAL FIX: Folosim .set(updates, { merge: true })
+         * În loc de .update(), asta asigură că dacă documentul userului lipsește 
+         * (pentru că a fost șters manual), acesta va fi creat pe loc cu noile valori.
+         */
         await userRef.set(updates, { merge: true });
+
+        // Marcăm claim-ul ca fiind procesat cu succes
         await snap.ref.update({ 
             status: 'verified', 
             processedAt: FieldValue.serverTimestamp() 
         });
+
+        console.log(`Successfully processed claim ${event.params.claimId} for user ${userIdStr}`);
         
-    } catch (err) {
-        console.error("Critical Trigger Failure:", err);
+    } catch (err: any) {
+        console.error("FATAL TRIGGER ERROR:", err);
+        // Notăm eroarea în documentul claim pentru debug
+        await snap.ref.update({ status: 'error', errorMessage: err.message });
     }
 });
 
 /**
- * TRIGGER: Procesare recompense RECLAME dedicate
+ * TRIGGER REFERALI
  */
-export const onAdClaimCreated = onDocumentCreated('ad_claims/{claimId}', async (event) => {
+export const onReferralClaimCreated = onDocumentCreated('referral_claims/{claimId}', async (event) => {
     const snap = event.data;
     if (!snap) return;
     const claim = snap.data();
-    const userIdStr = claim.userId.toString();
-    const userRef = db.collection('users').doc(userIdStr);
     
-    const value = Number(claim.rewardValue || 0);
+    try {
+        const referrerId = claim.referrerId.toString();
+        const referredId = claim.referredId.toString();
 
-    await userRef.set({
-        telegramId: Number(claim.userId),
-        balance: FieldValue.increment(value),
-        dailySupplyBalance: FieldValue.increment(value),
-        adsWatched: FieldValue.increment(1),
-        lastDailyClaim: Date.now(),
-        lastActive: FieldValue.serverTimestamp()
-    }, { merge: true });
-    
-    await snap.ref.update({ status: 'processed' });
+        const batch = db.batch();
+        
+        // Referrer primește bonus
+        batch.set(db.collection('users').doc(referrerId), {
+            balance: FieldValue.increment(50),
+            referralBalance: FieldValue.increment(50),
+            referrals: FieldValue.increment(1),
+            referralNames: FieldValue.arrayUnion(claim.referredName || "Hunter")
+        }, { merge: true });
+
+        // Referred este marcat ca activat
+        batch.set(db.collection('users').doc(referredId), {
+            hasClaimedReferral: true
+        }, { merge: true });
+
+        await batch.commit();
+        await snap.ref.update({ status: 'verified', processedAt: FieldValue.serverTimestamp() });
+
+    } catch (err) {
+        console.error("Referral processing failed:", err);
+    }
 });
 
 export const chatWithELZR = onCall(async (request) => {
-    const { data } = request;
+    const { messages } = request.data || {};
     if (!process.env.API_KEY) throw new HttpsError('failed-precondition', 'AI Node Disconnected');
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: data.messages.map((m: any) => ({ role: m.role, parts: [{ text: m.text.substring(0, 500) }] })),
-        config: { systemInstruction: "You are ELZR System Scout.", temperature: 0.7 }
-    });
-    return { text: response.text };
+    
+    try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const response = await ai.models.generateContent({
+            model: 'gemini-3-flash-preview',
+            contents: messages.map((m: any) => ({ role: m.role, parts: [{ text: m.text.substring(0, 500) }] })),
+            config: { systemInstruction: "You are ELZR System Scout.", temperature: 0.7 }
+        });
+        return { text: response.text };
+    } catch (e: any) {
+        throw new HttpsError('internal', 'AI Core Error');
+    }
 });

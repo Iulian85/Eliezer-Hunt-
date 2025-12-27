@@ -65,6 +65,15 @@ export const getCloudStorageId = (): Promise<string> => {
     });
 };
 
+// FIX: Adăugat pentru a preveni eroarea de build
+export const clearCloudStorageId = (): Promise<void> => {
+    return new Promise((resolve) => {
+        const tg = window.Telegram?.WebApp;
+        if (!tg?.CloudStorage) { resolve(); return; }
+        tg.CloudStorage.setItem('elzr_uuid', '', () => resolve());
+    });
+};
+
 export const askGeminiProxy = async (messages: any[]) => {
     const fingerprint = await getCurrentFingerprint();
     const cloudId = await getCloudStorageId();
@@ -101,6 +110,9 @@ export const subscribeToUserProfile = (tgId: number, defaults: UserState, callba
         if (docSnap.exists()) {
             const data = sanitizeUserData(docSnap.data(), defaults);
             callback(data);
+        } else {
+            // Dacă documentul a fost șters manual, trimitem default-urile pentru a preveni crash în UI
+            callback(defaults);
         }
     }, (err) => {
         console.error("Firestore Subscription Error:", err);
@@ -122,23 +134,23 @@ export const syncUserWithFirebase = async (
         const userDoc = await getDoc(userDocRef);
         if (userDoc.exists()) {
             const existingData = userDoc.data();
-            if (existingData.cloudStorageId !== cloudId || existingData.deviceFingerprint !== fingerprint) {
-                await updateDoc(userDocRef, { 
-                    cloudStorageId: cloudId, 
-                    deviceFingerprint: fingerprint,
-                    lastActive: serverTimestamp()
-                });
-            }
+            // Actualizăm doar metadatele de activitate, păstrăm balanța
+            await updateDoc(userDocRef, { 
+                cloudStorageId: cloudId, 
+                deviceFingerprint: fingerprint,
+                lastActive: serverTimestamp(),
+                photoUrl: userData.photoUrl || existingData.photoUrl || ''
+            });
             return sanitizeUserData({ ...existingData, cloudStorageId: cloudId }, localState);
         } else {
+            // DACĂ DOCUMENTUL NU EXISTĂ (S-A ȘTERS MANUAL), ÎL CREĂM DE LA ZERO
             const newUserProfile: any = {
-                telegramId: userData.id,
+                telegramId: Number(userData.id),
                 username: userData.username || `Hunter_${userData.id.toString().slice(-4)}`,
                 photoUrl: userData.photoUrl || '',
                 deviceFingerprint: fingerprint,
                 cloudStorageId: cloudId,
-                lastInitData: initDataRaw,
-                lastLocation: currentLocation || null,
+                lastInitData: initDataRaw || '',
                 isBanned: false,
                 balance: 0,
                 tonBalance: 0,
@@ -162,17 +174,17 @@ export const syncUserWithFirebase = async (
     }
 };
 
-export const saveCollectionToFirebase = async (tgId: number, spawnId: string, value: number, category?: HotspotCategory, tonReward: number = 0, captureLocation?: Coordinate) => {
+export const saveCollectionToFirebase = async (tgId: number, spawnId: string, value: number, category?: HotspotCategory, tonReward: number = 0) => {
     if (!tgId) return;
     const fingerprint = await getCurrentFingerprint();
     const cloudId = await getCloudStorageId();
-    const userRef = doc(db, "users", tgId.toString());
 
     try {
-        // Înregistrăm colectarea pentru procesare backend
+        // ADAUGĂM DOAR ÎN CLAIMS. Backend trigger (Functions) va actualiza balanța.
+        // Asta previne dubla incrementare și erorile de permisiuni în frontend.
         await addDoc(collection(db, "claims"), {
             userId: Number(tgId),
-            spawnId,
+            spawnId: spawnId.toString(),
             claimedValue: Number(value),
             tonReward: Number(tonReward),
             category: category || "URBAN", 
@@ -181,42 +193,9 @@ export const saveCollectionToFirebase = async (tgId: number, spawnId: string, va
             fingerprint: fingerprint,
             cloudId: cloudId
         });
-
-        // Actualizăm profilul utilizatorului
-        const updates: any = {
-            lastActive: serverTimestamp()
-        };
-
-        // Adăugăm ID-ul în colecția de colectate pentru a preveni reapariția
-        if (spawnId && !spawnId.startsWith('ad-')) {
-            updates.collectedIds = arrayUnion(spawnId);
-        }
-
-        // Incrementăm local balanțele pentru feedback instant
-        updates.balance = increment(value);
-        updates.tonBalance = increment(tonReward);
-
-        switch (category) {
-            case 'URBAN': case 'MALL': updates.gameplayBalance = increment(value); break;
-            case 'LANDMARK': updates.rareBalance = increment(value); updates.rareItemsCollected = increment(1); break;
-            case 'EVENT': updates.eventBalance = increment(value); updates.eventItemsCollected = increment(1); break;
-            case 'MERCHANT': updates.merchantBalance = increment(value); updates.sponsoredAdsWatched = increment(1); break;
-            case 'AD_REWARD': 
-                updates.dailySupplyBalance = increment(value); 
-                updates.adsWatched = increment(1);
-                updates.lastDailyClaim = Date.now();
-                break;
-        }
-
-        await updateDoc(userRef, updates);
-
     } catch (e) {
-        console.error("Critical Save Error:", e);
+        console.error("Claim Save Error:", e);
     }
-};
-
-export const requestAdRewardFirebase = async (tgId: number, rewardValue: number) => {
-    await saveCollectionToFirebase(tgId, `ad-manual-${Date.now()}`, rewardValue, 'AD_REWARD');
 };
 
 export const processReferralReward = async (referrerId: string, newUserId: number, newUserName: string) => {
@@ -226,15 +205,9 @@ export const processReferralReward = async (referrerId: string, newUserId: numbe
             referredId: Number(newUserId),
             referredName: newUserName,
             timestamp: serverTimestamp(),
-            status: "verified"
+            status: "pending"
         });
-        
-        await updateDoc(doc(db, "users", newUserId.toString()), {
-            hasClaimedReferral: true
-        });
-    } catch (e) {
-        console.error("Referral error", e);
-    }
+    } catch (e) {}
 };
 
 export const getLeaderboard = async () => {
@@ -262,42 +235,25 @@ export const updateUserWalletInFirebase = async (id: number, w: string) => {
     if (!id || !w) return;
     try {
         await updateDoc(doc(db, "users", id.toString()), { walletAddress: w });
-    } catch (error) {
-        console.error("Eroare salvare wallet:", error);
-    }
+    } catch (error) {}
 };
 
 export const resetUserInFirebase = async (targetUserId: number): Promise<{success: boolean, error?: string}> => {
     try {
-        const userRef = doc(db, "users", targetUserId.toString());
-        await updateDoc(userRef, {
-            balance: 0,
-            tonBalance: 0,
-            gameplayBalance: 0,
-            rareBalance: 0,
-            eventBalance: 0,
-            dailySupplyBalance: 0,
-            merchantBalance: 0,
-            referralBalance: 0,
-            collectedIds: [],
-            lastDailyClaim: 0
-        });
-        return { success: true };
+        const resetFunc = httpsCallable(functions, 'resetUserProtocol');
+        const res: any = await resetFunc({ targetUserId: Number(targetUserId) });
+        return { success: res.data?.success };
     } catch (e: any) {
         return { success: false, error: e.message };
     }
 };
 
 export const processWithdrawTON = async (tgId: number, amount: number) => {
-    const fingerprint = await getCurrentFingerprint();
-    const cloudId = await getCloudStorageId();
     await addDoc(collection(db, "withdrawal_requests"), { 
         userId: Number(tgId), 
         amount: Number(amount), 
         status: "pending_review", 
-        timestamp: serverTimestamp(),
-        fingerprint,
-        cloudId
+        timestamp: serverTimestamp()
     });
     return true;
 };
