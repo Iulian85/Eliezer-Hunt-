@@ -3,51 +3,39 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    match /used_nonces/{nonceId} {
-      allow read: if false;
-      allow write: if false;
-    }
-
+    // Utilizatorii pot citi doar profilul lor (sau alții pentru leaderboard)
+    // Dar NU pot face update direct pe câmpuri sensibile (balanță, ban, etc.)
     match /users/{userId} {
-      allow read: if true; 
-      allow create: if true;
-      allow update: if true; 
-      allow delete: if true; 
-
-      match /security_logs/{logId} {
-        allow read, write: if false;
-      }
+      allow read: if true;
+      allow create: if true; 
+      allow update: if false; // Toate update-urile trec prin Cloud Functions
+      allow delete: if false;
     }
     
+    // Cererile de colectare: clientul poate doar să creeze, nu să citească/modifice
     match /claims/{claimId} {
-      allow create: if true;
-      allow read, update, delete: if true;
+      allow create: if request.auth == null; // Permitem crearea inițială (verificată în Functions)
+      allow read, update, delete: if false;
     }
 
     match /ad_claims/{claimId} {
       allow create: if true;
-      allow read, update, delete: if true;
-    }
-
-    match /referral_claims/{claimId} {
-      allow create: if true;
-      allow read, update, delete: if true;
+      allow read: if false;
     }
 
     match /withdrawal_requests/{reqId} {
       allow create: if true;
-      allow read, update, delete: if true;
+      allow read: if false;
     }
     
     match /campaigns/{campId} {
       allow read: if true;
-      allow write: if true;
-      allow delete: if true;
+      allow write: if false; // Doar Admin via Functions/Console
     }
 
     match /hotspots/{hId} {
       allow get, list: if true;
-      allow write, delete: if true;
+      allow write: if false;
     }
   }
 }

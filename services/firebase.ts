@@ -1,3 +1,4 @@
+
 import { initializeApp, getApps, getApp } from "@firebase/app";
 import { 
     getFirestore, 
@@ -36,28 +37,6 @@ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 export const db = getFirestore(app);
 export const functions = getFunctions(app);
 
-export async function getCurrentFingerprint() {
-    try {
-        const fp = await FingerprintJS.load();
-        const result = await fp.get();
-        return result.visitorId;
-    } catch (e) { return "unknown_fp"; }
-}
-
-export const getCloudStorageId = (): Promise<string> => {
-    return new Promise((resolve) => {
-        const tg = window.Telegram?.WebApp;
-        if (!tg?.CloudStorage) { resolve("no_cloud_storage"); return; }
-        tg.CloudStorage.getItem('elzr_uuid', (err, value) => {
-            if (value) resolve(value);
-            else { 
-                const newUuid = crypto.randomUUID(); 
-                tg.CloudStorage.setItem('elzr_uuid', newUuid, () => resolve(newUuid)); 
-            }
-        });
-    });
-};
-
 const sanitizeUserData = (data: any, defaults: UserState): UserState => {
     return {
         ...defaults,
@@ -86,23 +65,24 @@ export const subscribeToUserProfile = (tgId: number, defaults: UserState, callba
     });
 };
 
-export const syncUserWithFirebase = async (userData: any, localState: UserState, fingerprint: string, cloudId: string, initData?: string): Promise<UserState> => {
+export const syncUserWithFirebase = async (userData: any, localState: UserState, fingerprint: string, cloudId: string): Promise<UserState> => {
     if (!userData.id) return localState;
     const userIdStr = String(userData.id);
     const userDocRef = doc(db, "users", userIdStr);
+    const initData = window.Telegram?.WebApp?.initData || "";
     
     try {
         const userDoc = await getDoc(userDocRef);
         if (userDoc.exists()) {
-            const data = userDoc.data();
+            // Nu mai facem update direct pe balanță aici
             await updateDoc(userDocRef, { 
                 cloudStorageId: cloudId, 
                 deviceFingerprint: fingerprint, 
                 lastActive: serverTimestamp(),
                 photoUrl: userData.photoUrl || '',
-                lastInitData: initData || ''
+                lastInitData: initData
             });
-            return sanitizeUserData(data, localState);
+            return sanitizeUserData(userDoc.data(), localState);
         } else {
             const newUser: any = { 
                 telegramId: Number(userData.id), 
@@ -121,7 +101,7 @@ export const syncUserWithFirebase = async (userData: any, localState: UserState,
                 collectedIds: [], 
                 joinedAt: serverTimestamp(), 
                 lastActive: serverTimestamp(),
-                lastInitData: initData || ''
+                lastInitData: initData
             };
             await setDoc(userDocRef, newUser);
             return newUser;
@@ -130,47 +110,33 @@ export const syncUserWithFirebase = async (userData: any, localState: UserState,
 };
 
 /**
- * RESTAURARE: Scriem direct în Firestore pentru a evita eroarea de Cloud Functions.
+ * SECURITY FIX: Folosim Cloud Functions pentru claim.
  */
-export const saveCollectionToFirebase = async (tgId: number, spawnId: string, value: number, category?: HotspotCategory, tonReward: number = 0) => {
+export const saveCollectionToFirebase = async (tgId: number, spawnId: string, clientValue: number, category?: HotspotCategory, tonReward: number = 0) => {
     if (!tgId) return;
-    const userRef = doc(db, "users", String(tgId));
     
     try {
-        const updateData: any = {
-            balance: increment(value),
-            tonBalance: increment(tonReward),
-            lastActive: serverTimestamp()
-        };
+        const initData = window.Telegram?.WebApp?.initData || "";
+        const location = await new Promise<Coordinate>((resolve) => {
+            navigator.geolocation.getCurrentPosition((p) => resolve({lat: p.coords.latitude, lng: p.coords.longitude}), 
+            () => resolve({lat: 0, lng: 0}));
+        });
 
-        // Adăugăm ID-ul în lista de colectate (dacă nu e ad publicitar)
-        if (!spawnId.startsWith('ad-')) {
-            updateData.collectedIds = arrayUnion(spawnId);
-        }
-
-        // Tracking pe categorii
-        if (category === 'AD_REWARD') {
-            updateData.dailySupplyBalance = increment(value);
-            updateData.lastDailyClaim = Date.now();
-        } else if (category === 'MERCHANT') {
-            updateData.merchantBalance = increment(value);
-        } else if (category === 'LANDMARK') {
-            updateData.rareBalance = increment(value);
-        } else if (category === 'EVENT') {
-            updateData.eventBalance = increment(value);
-        } else {
-            updateData.gameplayBalance = increment(value);
-        }
-
-        await updateDoc(userRef, updateData);
-    } catch (e) { 
-        console.error("Direct Save Error:", e);
-        // Fallback: Încercăm setDoc dacă documentul nu există (deși ar trebui să existe din sync)
-        await setDoc(userRef, { balance: value, telegramId: tgId }, { merge: true });
+        const secureClaimFunc = httpsCallable(functions, 'secureClaim');
+        await secureClaimFunc({
+            userId: tgId,
+            spawnId,
+            category,
+            initData,
+            coords: location
+        });
+    } catch (e) {
+        console.error("Secure Claim Call eșuat:", e);
     }
 };
 
 export const processReferralReward = async (referrerId: string, userId: number, userName: string) => {
+    // În producție, acesta ar trebui să fie de asemenea un Cloud Function
     try {
         const referrerRef = doc(db, "users", String(referrerId));
         await updateDoc(referrerRef, {
@@ -185,28 +151,26 @@ export const processReferralReward = async (referrerId: string, userId: number, 
 
 export const askGeminiProxy = async (messages: any[]) => {
     try {
+        const tg = window.Telegram?.WebApp;
         const chatFunc = httpsCallable(functions, 'chatWithELZR');
-        const res: any = await chatFunc({ messages });
+        const res: any = await chatFunc({ 
+            messages,
+            userId: tg?.initDataUnsafe?.user?.id 
+        });
         return res.data;
     } catch (e) {
-        return { text: "Sistemul AI este momentan în mentenanță (Nodul Cloud neconfigurat)." };
+        return { text: "Protocol AI ocupat. Reîncercați mai târziu." };
     }
 };
 
 export const resetUserInFirebase = async (targetUserId: number) => {
+    // Admin request should verify admin wallet address on server if possible
     try {
         const userRef = doc(db, "users", String(targetUserId));
         await updateDoc(userRef, {
-            balance: 0,
-            tonBalance: 0,
-            gameplayBalance: 0,
-            rareBalance: 0,
-            eventBalance: 0,
-            dailySupplyBalance: 0,
-            merchantBalance: 0,
-            referralBalance: 0,
-            collectedIds: [],
-            lastActive: serverTimestamp()
+            balance: 0, tonBalance: 0, gameplayBalance: 0, rareBalance: 0, 
+            eventBalance: 0, dailySupplyBalance: 0, merchantBalance: 0, 
+            referralBalance: 0, collectedIds: [], lastActive: serverTimestamp()
         });
         return { success: true };
     } catch (e: any) { return { success: false, error: e.message }; }
@@ -222,20 +186,6 @@ export const getLeaderboard = async () => {
     }));
 };
 
-export const markUserAirdropped = async (id: string, amount: number) => {
-    try {
-        const userRef = doc(db, "users", String(id));
-        await updateDoc(userRef, {
-            isAirdropped: true,
-            airdropAmount: amount,
-            airdropTimestamp: serverTimestamp()
-        });
-        return true;
-    } catch (e) {
-        return false;
-    }
-};
-
 export const subscribeToCampaigns = (cb: any) => onSnapshot(collection(db, "campaigns"), snap => cb(snap.docs.map(d => d.data())));
 export const subscribeToHotspots = (cb: any) => onSnapshot(collection(db, "hotspots"), snap => cb(snap.docs.map(d => d.data())));
 export const subscribeToWithdrawalRequests = (cb: (reqs: any[]) => void) => {
@@ -248,11 +198,8 @@ export const updateWithdrawalStatus = async (id: string, status: 'completed' | '
         const reqRef = doc(db, "withdrawal_requests", id);
         const reqDoc = await getDoc(reqRef);
         if (!reqDoc.exists()) return false;
-        
         const data = reqDoc.data();
         await updateDoc(reqRef, { status, processedAt: serverTimestamp(), txHash: txHash || '' });
-
-        // Dacă e marcat ca finalizat, scădem din balanța de TON a userului
         if (status === 'completed' && data.userId) {
             const userRef = doc(db, "users", String(data.userId));
             await updateDoc(userRef, { tonBalance: increment(-Number(data.amount)) });
@@ -279,6 +226,19 @@ export const processWithdrawTON = async (tgId: number, amount: number) => {
             amount: Number(amount), 
             status: "pending", 
             timestamp: serverTimestamp() 
+        });
+        return true;
+    } catch (e) { return false; }
+};
+
+// Fix for AdminView.tsx error: added missing markUserAirdropped export
+export const markUserAirdropped = async (id: string, allocation: number) => {
+    try {
+        const userRef = doc(db, "users", String(id));
+        await updateDoc(userRef, {
+            isAirdropped: true,
+            airdropAllocation: allocation,
+            airdropTimestamp: serverTimestamp()
         });
         return true;
     } catch (e) {
