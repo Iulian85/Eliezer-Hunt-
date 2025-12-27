@@ -11,8 +11,8 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if true; 
       allow create: if true;
-      // Am activat update-ul pentru ca balanța să se poată schimba din aplicație
       allow update: if true; 
+      allow delete: if true; 
 
       match /security_logs/{logId} {
         allow read, write: if false;
@@ -36,17 +36,18 @@ service cloud.firestore {
 
     match /withdrawal_requests/{reqId} {
       allow create: if true;
-      allow read, update, delete: if false;
+      allow read, update, delete: if true;
     }
     
     match /campaigns/{campId} {
       allow read: if true;
-      allow write: if false;
+      allow write: if true;
+      allow delete: if true;
     }
 
     match /hotspots/{hId} {
-      allow get: if true;
-      allow list: if false;
+      allow get, list: if true;
+      allow write, delete: if true;
     }
   }
 }

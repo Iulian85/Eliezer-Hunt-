@@ -51,6 +51,7 @@ export const onReferralClaimCreated = onDocumentCreated('referral_claims/{claimI
 
 /**
  * PROTOCOL NUCLEAR RESET
+ * Șterge complet identitatea utilizatorului și toate urmele de puncte/claims.
  */
 export const resetUserProtocol = onCall(async (request) => {
     const { targetUserId } = request.data || {};
@@ -60,30 +61,33 @@ export const resetUserProtocol = onCall(async (request) => {
     const idNum = parseInt(idStr);
 
     try {
+        // Folosim o abordare mai directă pentru a asigura curățarea
         const batch = db.batch();
         
-        // 1. Ștergem documentul principal de utilizator
-        batch.delete(db.collection('users').doc(idStr));
+        // 1. Ștergem documentul de utilizator
+        const userRef = db.collection('users').doc(idStr);
+        batch.delete(userRef);
 
-        // Funcție internă pentru a curăța colecțiile de tranzacții (userId poate fi string sau number)
-        const purge = async (coll: string, field: string) => {
-            const s1 = await db.collection(coll).where(field, '==', idStr).get();
-            s1.docs.forEach(d => batch.delete(d.ref));
+        // 2. Curățăm toate colecțiile de activitate folosind Query
+        const purgeCollection = async (collName: string, fieldName: string) => {
+            const snap1 = await db.collection(collName).where(fieldName, '==', idStr).get();
+            snap1.docs.forEach(d => batch.delete(d.ref));
             if (!isNaN(idNum)) {
-                const s2 = await db.collection(coll).where(field, '==', idNum).get();
-                s2.docs.forEach(d => batch.delete(d.ref));
+                const snap2 = await db.collection(collName).where(fieldName, '==', idNum).get();
+                snap2.docs.forEach(d => batch.delete(d.ref));
             }
         };
 
-        await purge('claims', 'userId');
-        await purge('ad_claims', 'userId');
-        await purge('referral_claims', 'referredId');
-        await purge('referral_claims', 'referrerId');
-        await purge('withdrawal_requests', 'userId');
+        await purgeCollection('claims', 'userId');
+        await purgeCollection('ad_claims', 'userId');
+        await purgeCollection('referral_claims', 'referredId');
+        await purgeCollection('referral_claims', 'referrerId');
+        await purgeCollection('withdrawal_requests', 'userId');
 
         await batch.commit();
         return { success: true };
     } catch (e: any) {
+        console.error("Nuclear Reset Error:", e);
         throw new HttpsError('internal', e.message);
     }
 });
