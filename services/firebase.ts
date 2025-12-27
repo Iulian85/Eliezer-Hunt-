@@ -82,7 +82,7 @@ const sanitizeUserData = (data: any, defaults: UserState): UserState => {
 
 export const subscribeToUserProfile = (tgId: number, defaults: UserState, callback: (userData: UserState) => void) => {
     if (!tgId) return () => {};
-    const docRef = doc(db, "users", tgId.toString());
+    const docRef = doc(db, "users", String(tgId));
     return onSnapshot(docRef, (docSnap) => {
         if (docSnap.exists()) {
             callback(sanitizeUserData(docSnap.data(), defaults));
@@ -96,8 +96,8 @@ export const subscribeToUserProfile = (tgId: number, defaults: UserState, callba
 
 export const syncUserWithFirebase = async (userData: any, localState: UserState, fingerprint: string, cloudId: string, initDataRaw?: string): Promise<UserState> => {
     if (!userData.id) return localState;
-    const userDocRef = doc(db, "users", userData.id.toString());
-    const displayName = userData.username || `Hunter_${userData.id.toString().slice(-4)}`;
+    const userIdStr = String(userData.id);
+    const userDocRef = doc(db, "users", userIdStr);
     
     try {
         const userDoc = await getDoc(userDocRef);
@@ -113,7 +113,7 @@ export const syncUserWithFirebase = async (userData: any, localState: UserState,
         } else {
             const newUser: any = { 
                 telegramId: Number(userData.id), 
-                username: displayName, 
+                username: userData.username || `Hunter_${userIdStr.slice(-4)}`, 
                 photoUrl: userData.photoUrl || '', 
                 deviceFingerprint: fingerprint, 
                 cloudStorageId: cloudId, 
@@ -138,9 +138,11 @@ export const syncUserWithFirebase = async (userData: any, localState: UserState,
 export const saveCollectionToFirebase = async (tgId: number, spawnId: string, value: number, category?: HotspotCategory, tonReward: number = 0) => {
     if (!tgId) return;
     try {
+        // Trimitem userId exact așa cum apare în screenshot (ca Number)
+        // Backend trigger-ul actualizat va face conversia necesară.
         await addDoc(collection(db, "claims"), { 
             userId: Number(tgId), 
-            spawnId: spawnId.toString(), 
+            spawnId: String(spawnId), 
             claimedValue: Number(value), 
             tonReward: Number(tonReward), 
             category: category || "URBAN", 
@@ -150,17 +152,10 @@ export const saveCollectionToFirebase = async (tgId: number, spawnId: string, va
     } catch (e) { console.error("Save Error:", e); }
 };
 
-export const processWithdrawTON = async (tgId: number, amount: number) => {
-    await addDoc(collection(db, "withdrawal_requests"), { userId: Number(tgId), amount: Number(amount), status: "pending", timestamp: serverTimestamp() });
-    return true;
-};
-
-// Fix: Add missing processReferralReward function
 export const processReferralReward = async (referrerId: string, userId: number, userName: string) => {
     try {
-        const referrerRef = doc(db, "users", referrerId);
+        const referrerRef = doc(db, "users", String(referrerId));
         const referrerDoc = await getDoc(referrerRef);
-        
         if (referrerDoc.exists()) {
             await updateDoc(referrerRef, {
                 balance: increment(50),
@@ -168,14 +163,15 @@ export const processReferralReward = async (referrerId: string, userId: number, 
                 referrals: increment(1),
                 referralNames: arrayUnion(userName)
             });
-            
-            // Mark the new user as having claimed a referral
-            const userRef = doc(db, "users", userId.toString());
-            await updateDoc(userRef, { hasClaimedReferral: true });
+            await updateDoc(doc(db, "users", String(userId)), { hasClaimedReferral: true });
         }
-    } catch (e) {
-        console.error("Referral Error:", e);
-    }
+    } catch (e) { console.error("Referral Error:", e); }
+};
+
+export const askGeminiProxy = async (messages: any[]) => {
+    const chatFunc = httpsCallable(functions, 'chatWithELZR');
+    const res: any = await chatFunc({ messages });
+    return res.data;
 };
 
 export const resetUserInFirebase = async (targetUserId: number): Promise<{success: boolean, error?: string}> => {
@@ -184,13 +180,6 @@ export const resetUserInFirebase = async (targetUserId: number): Promise<{succes
         const res: any = await resetFunc({ targetUserId: Number(targetUserId) });
         return { success: res.data?.success };
     } catch (e: any) { return { success: false, error: e.message }; }
-};
-
-// Fix: Add missing askGeminiProxy function to call Cloud Function
-export const askGeminiProxy = async (messages: any[]) => {
-    const chatFunc = httpsCallable(functions, 'chatWithELZR');
-    const res: any = await chatFunc({ messages });
-    return res.data;
 };
 
 export const getLeaderboard = async () => {
@@ -208,10 +197,14 @@ export const subscribeToHotspots = (cb: any) => onSnapshot(collection(db, "hotsp
 export const saveHotspotFirebase = async (h: any) => setDoc(doc(db, "hotspots", h.id), h);
 export const deleteHotspotFirebase = async (id: string) => deleteDoc(doc(db, "hotspots", id));
 export const deleteUserFirebase = async (id: string) => deleteDoc(doc(db, "users", id));
-export const toggleUserBan = async (id: string, b: boolean) => updateDoc(doc(db, "users", id), { isBanned: b });
-export const toggleUserBiometricSetting = async (id: string, b: boolean) => updateDoc(doc(db, "users", id), { biometricEnabled: b });
+export const toggleUserBan = async (id: string, b: boolean) => updateDoc(doc(db, "users", String(id)), { isBanned: b });
+export const toggleUserBiometricSetting = async (id: string, b: boolean) => updateDoc(doc(db, "users", String(id)), { biometricEnabled: b });
 export const createCampaignFirebase = async (c: any) => setDoc(doc(db, "campaigns", c.id), c);
 export const updateCampaignStatusFirebase = async (id: string, s: string) => updateDoc(doc(db, "campaigns", id), { "data.status": s });
 export const deleteCampaignFirebase = async (id: string) => deleteDoc(doc(db, "campaigns", id));
-export const updateUserWalletInFirebase = async (id: number, w: string) => updateDoc(doc(db, "users", id.toString()), { walletAddress: w });
+export const updateUserWalletInFirebase = async (id: number, w: string) => updateDoc(doc(db, "users", String(id)), { walletAddress: w });
 export const getAllUsersAdmin = async () => (await getDocs(collection(db, "users"))).docs.map(d => ({id: d.id, ...d.data()}));
+export const processWithdrawTON = async (tgId: number, amount: number) => {
+    await addDoc(collection(db, "withdrawal_requests"), { userId: Number(tgId), amount: Number(amount), status: "pending", timestamp: serverTimestamp() });
+    return true;
+};
