@@ -149,7 +149,7 @@ function App() {
                     console.warn("Fingerprint detection timeout");
                 }
 
-                // FIX: Sincronizare corectă cu semnătura funcției din firebase.ts
+                // FIX: Sincronizam folosind argumentele acceptate de serviciu
                 const synced = await syncUserWithFirebase(userData, defaultUserState, fingerprint);
                 setUserState(prev => ({ ...prev, ...synced }));
 
@@ -171,7 +171,7 @@ function App() {
                     }
                 }
 
-                // FIX: Adăugat defaultUserState pentru a respecta serviciul
+                // FIX: Adaugat defaultUserState ca al doilea argument conform serviciului
                 subscribeToUserProfile(parseInt(userId), defaultUserState, (updatedData) => {
                     setUserState(prev => ({ ...prev, ...updatedData }));
                     if (updatedData.isBanned) setIsBlocked(true);
@@ -426,22 +426,11 @@ function App() {
         );
     }
 
-    // REPARAȚIE AFRICA: Dacă GPS-ul nu este gata, așteptăm blocarea satelitului
-    if (!userState.location) {
-        return (
-            <div className="h-screen w-screen bg-slate-950 flex flex-col items-center justify-center text-white font-mono">
-                <Loader2 className="text-cyan-500 animate-spin mb-4" size={32} />
-                <p className="text-[10px] uppercase font-black tracking-widest animate-pulse">Waiting for Satellite Lock...</p>
-                <p className="text-[8px] text-slate-600 mt-2 uppercase">Locating Secure Extraction Node</p>
-            </div>
-        );
-    }
-
     return (
         <div className="h-screen w-screen bg-slate-950 text-white flex flex-col relative overflow-hidden">
             <div className="flex-1 relative overflow-hidden">
-                {activeTab === Tab.MAP && <MapView location={userState.location} spawns={spawns} collectedIds={userState.collectedIds} hotspots={allHotspots} />}
-                {activeTab === Tab.HUNT && <HuntView location={userState.location} spawns={spawns} collectedIds={userState.collectedIds} onCollect={handleCollect} hotspots={allHotspots} />}
+                {activeTab === Tab.MAP && <MapView location={userState.location || DEFAULT_LOCATION} spawns={spawns} collectedIds={userState.collectedIds} hotspots={allHotspots} />}
+                {activeTab === Tab.HUNT && <HuntView location={userState.location || DEFAULT_LOCATION} spawns={spawns} collectedIds={userState.collectedIds} onCollect={handleCollect} hotspots={allHotspots} />}
                 {activeTab === Tab.LEADERBOARD && <LeaderboardView />}
                 {activeTab === Tab.WALLET && (
                     <WalletView 
