@@ -12,23 +12,38 @@ if (getApps().length === 0) {
 const db = getFirestore();
 
 /**
- * PROTOCOL RESET BALANȚĂ (PĂSTREAZĂ USERUL/ADMINUL)
+ * FUNCȚIE AJUTĂTOARE PENTRU ȘTERGERE MASIVĂ (SAFE BATCH)
+ */
+async function deleteQueryBatch(query: any) {
+    const snapshot = await query.get();
+    if (snapshot.empty) return;
+
+    const batchSize = 400; // Limita Firebase e 500, folosim 400 pt siguranță
+    const docs = snapshot.docs;
+    
+    for (let i = 0; i < docs.length; i += batchSize) {
+        const batch = db.batch();
+        const chunk = docs.slice(i, i + batchSize);
+        chunk.forEach((doc: any) => batch.delete(doc.ref));
+        await batch.commit();
+    }
+}
+
+/**
+ * PROTOCOL RESET BALANȚĂ (SAFE FOR ADMIN)
  */
 export const resetUserProtocol = onCall(async (request) => {
-    // Verificăm dacă avem ID-ul țintă
     const targetUserId = request.data?.targetUserId;
-    if (!targetUserId) {
-        throw new HttpsError('invalid-argument', 'ID-ul utilizatorului lipsește.');
-    }
+    if (!targetUserId) throw new HttpsError('invalid-argument', 'ID utilizator lipsă.');
 
     const idStr = targetUserId.toString();
     const idNum = parseInt(idStr);
 
     try {
-        console.log(`Începere resetare pentru Hunter: ${idStr}`);
+        console.log(`[RESET] Hunter vizat: ${idStr}`);
         const userRef = db.collection('users').doc(idStr);
         
-        // 1. Resetăm toate cifrele la 0 folosind SET cu MERGE (mult mai stabil decât UPDATE)
+        // 1. Resetăm PROFILUL (Balanța la zero) - Operațiune atomică
         await userRef.set({
             balance: 0,
             tonBalance: 0,
@@ -50,37 +65,29 @@ export const resetUserProtocol = onCall(async (request) => {
             lastActive: FieldValue.serverTimestamp()
         }, { merge: true });
 
-        // 2. Ștergem înregistrările de colectare (claims) pentru a nu se recalcula balanța
-        // Facem asta separat de batch pentru a evita eroarea "internal" la volume mari
-        const collectionsToPurge = ['claims', 'ad_claims', 'referral_claims', 'withdrawal_requests'];
+        // 2. CURĂȚĂM ISTORICUL (Ștergere în calupuri sigure)
         
-        for (const collName of collectionsToPurge) {
-            try {
-                // Curățăm documentele unde userId este String
-                const snap = await db.collection(collName).where('userId', '==', idStr).get();
-                if (!snap.empty) {
-                    const batch = db.batch();
-                    snap.docs.forEach(doc => batch.delete(doc.ref));
-                    await batch.commit();
-                }
-                
-                // Curățăm documentele unde userId este Number (unele triggere folosesc number)
-                const snapNum = await db.collection(collName).where('userId', '==', idNum).get();
-                if (!snapNum.empty) {
-                    const batch = db.batch();
-                    snapNum.docs.forEach(doc => batch.delete(doc.ref));
-                    await batch.commit();
-                }
-            } catch (e) {
-                console.warn(`Atenție: Nu s-a putut curăța complet colecția ${collName}, dar balanța principală a fost resetată.`);
-            }
-        }
+        // Claims simple (unde ești tu userId)
+        await deleteQueryBatch(db.collection('claims').where('userId', '==', idStr));
+        await deleteQueryBatch(db.collection('claims').where('userId', '==', idNum));
+        
+        // Ad Claims
+        await deleteQueryBatch(db.collection('ad_claims').where('userId', '==', idStr));
+        await deleteQueryBatch(db.collection('ad_claims').where('userId', '==', idNum));
 
-        console.log(`Resetare reușită pentru ${idStr}. Balanța este acum 0.`);
+        // Referali (Trebuie șterse ambele direcții: cine te-a adus și pe cine ai adus)
+        await deleteQueryBatch(db.collection('referral_claims').where('referrerId', '==', idStr));
+        await deleteQueryBatch(db.collection('referral_claims').where('referredId', '==', idStr));
+        
+        // Cereri de retragere
+        await deleteQueryBatch(db.collection('withdrawal_requests').where('userId', '==', idStr));
+
+        console.log(`[RESET COMPLETE] Hunter ${idStr} a fost adus la zero.`);
         return { success: true };
+
     } catch (e: any) {
-        console.error("Eroare CRITICĂ la resetare:", e);
-        throw new HttpsError('internal', `Resetarea a eșuat pe server: ${e.message}`);
+        console.error("CRITICAL RESET ERROR:", e);
+        throw new HttpsError('internal', `Eroare server: ${e.message}`);
     }
 });
 
