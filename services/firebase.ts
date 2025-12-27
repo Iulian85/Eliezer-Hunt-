@@ -16,8 +16,7 @@ import {
     serverTimestamp,
     increment,
     deleteDoc,
-    arrayUnion,
-    QuerySnapshot
+    arrayUnion
 } from "@firebase/firestore";
 import { getFunctions, httpsCallable } from "@firebase/functions";
 import FingerprintJS from '@fingerprintjs/fingerprintjs';
@@ -43,25 +42,16 @@ export async function getCurrentFingerprint() {
         const fp = await FingerprintJS.load();
         const result = await fp.get();
         return result.visitorId;
-    } catch (e) {
-        return "unknown_fp";
-    }
+    } catch (e) { return "unknown_fp"; }
 }
 
 export const getCloudStorageId = (): Promise<string> => {
     return new Promise((resolve) => {
         const tg = window.Telegram?.WebApp;
-        if (!tg?.CloudStorage) {
-            resolve("no_cloud_storage");
-            return;
-        }
+        if (!tg?.CloudStorage) { resolve("no_cloud_storage"); return; }
         tg.CloudStorage.getItem('elzr_uuid', (err, value) => {
-            if (value) {
-                resolve(value);
-            } else {
-                const newUuid = crypto.randomUUID();
-                tg.CloudStorage.setItem('elzr_uuid', newUuid, () => resolve(newUuid));
-            }
+            if (value) resolve(value);
+            else { const newUuid = crypto.randomUUID(); tg.CloudStorage.setItem('elzr_uuid', newUuid, () => resolve(newUuid)); }
         });
     });
 };
@@ -69,11 +59,7 @@ export const getCloudStorageId = (): Promise<string> => {
 export const clearCloudStorageId = (): Promise<void> => {
     return new Promise((resolve) => {
         const tg = window.Telegram?.WebApp;
-        if (!tg?.CloudStorage) {
-            resolve();
-            return;
-        }
-        // Purjăm UUID-ul pentru a simula un dispozitiv complet nou
+        if (!tg?.CloudStorage) { resolve(); return; }
         tg.CloudStorage.setItem('elzr_uuid', '', () => resolve());
     });
 };
@@ -82,12 +68,7 @@ export const askGeminiProxy = async (messages: any[]) => {
     const fingerprint = await getCurrentFingerprint();
     const cloudId = await getCloudStorageId();
     const chatFunc = httpsCallable(functions, 'chatWithELZR');
-    const result = await chatFunc({ 
-        messages, 
-        initData: window.Telegram.WebApp.initData,
-        fingerprint: fingerprint,
-        cloudId: cloudId
-    });
+    const result = await chatFunc({ messages, initData: window.Telegram.WebApp.initData, fingerprint, cloudId });
     return result.data as { text: string };
 };
 
@@ -111,180 +92,48 @@ const sanitizeUserData = (data: any, defaults: UserState): UserState => {
 
 export const subscribeToUserProfile = (tgId: number, defaults: UserState, callback: (userData: UserState) => void) => {
     if (!tgId) return () => {};
-    const docId = tgId.toString();
-    return onSnapshot(doc(db, "users", docId), (docSnap) => {
-        if (docSnap.exists()) {
-            const data = sanitizeUserData(docSnap.data(), defaults);
-            callback(data);
-        }
-    }, (err) => {
-        console.error("Firestore Subscription Error:", err);
+    return onSnapshot(doc(db, "users", tgId.toString()), (docSnap) => {
+        if (docSnap.exists()) callback(sanitizeUserData(docSnap.data(), defaults));
     });
 };
 
-export const syncUserWithFirebase = async (
-    userData: { id: number, username?: string, firstName?: string, lastName?: string, photoUrl?: string }, 
-    localState: UserState, 
-    fingerprint: string,
-    cloudId: string,
-    initDataRaw?: string,
-    currentLocation?: Coordinate
-): Promise<UserState> => {
+export const syncUserWithFirebase = async (userData: any, localState: UserState, fingerprint: string, cloudId: string, initDataRaw?: string): Promise<UserState> => {
     if (!userData.id) return localState;
     const userDocRef = doc(db, "users", userData.id.toString());
-    
     const fullName = [userData.firstName, userData.lastName].filter(Boolean).join(' ');
     const displayName = fullName || userData.username || `Hunter_${userData.id.toString().slice(-4)}`;
-
     try {
         const userDoc = await getDoc(userDocRef);
         if (userDoc.exists()) {
-            // FIX: Casting to any to allow property access on Firestore data
-            const existingData = userDoc.data() as any;
-            if (existingData.username !== displayName || existingData.cloudStorageId !== cloudId) {
-                await updateDoc(userDocRef, { 
-                    username: displayName,
-                    cloudStorageId: cloudId, 
-                    deviceFingerprint: fingerprint,
-                    lastActive: serverTimestamp()
-                });
-            }
-            // FIX: Casting to any to allow spreading of Firestore data
-            return sanitizeUserData({ ...(userDoc.data() as any), username: displayName, cloudStorageId: cloudId }, localState);
+            await updateDoc(userDocRef, { username: displayName, cloudStorageId: cloudId, deviceFingerprint: fingerprint, lastActive: serverTimestamp() });
+            return sanitizeUserData(userDoc.data(), localState);
         } else {
-            const newUserProfile: any = {
-                telegramId: userData.id,
-                username: displayName,
-                photoUrl: userData.photoUrl || '',
-                deviceFingerprint: fingerprint,
-                cloudStorageId: cloudId,
-                lastInitData: initDataRaw,
-                lastLocation: currentLocation || null,
-                isBanned: false,
-                balance: 0,
-                tonBalance: 0,
-                gameplayBalance: 0,
-                rareBalance: 0,
-                eventBalance: 0,
-                dailySupplyBalance: 0,
-                merchantBalance: 0,
-                referralBalance: 0,
-                collectedIds: [],
-                joinedAt: serverTimestamp(),
-                lastActive: serverTimestamp(),
-                biometricEnabled: true,
-                referralNames: [],
-                hasClaimedReferral: false
-            };
-            await setDoc(userDocRef, newUserProfile);
-            return newUserProfile;
+            const newUser = { telegramId: userData.id, username: displayName, photoUrl: userData.photoUrl || '', deviceFingerprint: fingerprint, cloudStorageId: cloudId, balance: 0, tonBalance: 0, gameplayBalance: 0, rareBalance: 0, eventBalance: 0, dailySupplyBalance: 0, merchantBalance: 0, referralBalance: 0, collectedIds: [], joinedAt: serverTimestamp(), lastActive: serverTimestamp(), biometricEnabled: true, referralNames: [], hasClaimedReferral: false };
+            await setDoc(userDocRef, newUser);
+            return newUser as any;
         }
-    } catch (e) { 
-        console.error("Sync Error:", e);
-        return localState; 
-    }
+    } catch (e) { return localState; }
 };
 
-export const saveCollectionToFirebase = async (tgId: number, spawnId: string, value: number, category?: HotspotCategory, tonReward: number = 0, captureLocation?: Coordinate) => {
+export const saveCollectionToFirebase = async (tgId: number, spawnId: string, value: number, category?: HotspotCategory, tonReward: number = 0) => {
     if (!tgId) return;
-    const fingerprint = await getCurrentFingerprint();
-    const cloudId = await getCloudStorageId();
-    const userRef = doc(db, "users", tgId.toString());
-
     try {
-        await addDoc(collection(db, "claims"), {
-            userId: Number(tgId),
-            spawnId,
-            claimedValue: Number(value),
-            tonReward: Number(tonReward),
-            category: category || "URBAN", 
-            timestamp: serverTimestamp(),
-            status: "pending", 
-            fingerprint: fingerprint,
-            cloudId: cloudId
-        });
-
-        const updates: any = {
-            lastActive: serverTimestamp()
-        };
-
-        if (spawnId && !spawnId.startsWith('ad-')) {
-            updates.collectedIds = arrayUnion(spawnId);
-        }
-
-        updates.balance = increment(value);
-        updates.tonBalance = increment(tonReward);
-
-        switch (category) {
-            case 'URBAN': 
-            case 'MALL': 
-            case 'GIFTBOX': 
-                updates.gameplayBalance = increment(value); 
-                break;
-            case 'LANDMARK': 
-                updates.rareBalance = increment(value); 
-                updates.rareItemsCollected = increment(1); 
-                break;
-            case 'EVENT': 
-                updates.eventBalance = increment(value); 
-                updates.eventItemsCollected = increment(1); 
-                break;
-            case 'MERCHANT': 
-                updates.merchantBalance = increment(value); 
-                updates.sponsoredAdsWatched = increment(1); 
-                break;
-            case 'AD_REWARD': 
-                updates.dailySupplyBalance = increment(value); 
-                updates.adsWatched = increment(1); 
-                updates.lastDailyClaim = Date.now();
-                break;
-        }
-
-        await updateDoc(userRef, updates);
-
-    } catch (e) {
-        console.error("Critical Save Error:", e);
-    }
+        await addDoc(collection(db, "claims"), { userId: tgId, spawnId, claimedValue: value, tonReward, category: category || "URBAN", timestamp: serverTimestamp(), status: "pending" });
+    } catch (e) { console.error("Save Error:", e); }
 };
 
 export const processReferralReward = async (referrerId: string, newUserId: number, newUserName: string) => {
-    if (!referrerId || !newUserId) return;
-    
     try {
-        const claimRef = doc(collection(db, "referral_claims"));
-        await setDoc(claimRef, {
-            referrerId: referrerId.toString(),
-            referredId: newUserId.toString(),
-            referredName: newUserName,
-            timestamp: serverTimestamp(),
-            status: "pending"
-        });
-        
-        await updateDoc(doc(db, "users", newUserId.toString()), {
-            hasClaimedReferral: true
-        });
-
-        console.log(`[Referral System] Node Linked: ${referrerId} -> ${newUserId}`);
-    } catch (e) {
-        console.error("[Referral System] Critical Error:", e);
-    }
+        await addDoc(collection(db, "referral_claims"), { referrerId, referredId: newUserId.toString(), referredName: newUserName, timestamp: serverTimestamp(), status: "pending" });
+    } catch (e) {}
 };
 
 export const getLeaderboard = async () => {
     const q = query(collection(db, "users"), orderBy("balance", "desc"), limit(50));
     const snapshot = await getDocs(q);
-    return snapshot.docs.map((docSnap, index) => {
-        // FIX: Casting data() result to any to access properties
-        const data = docSnap.data() as any;
-        return {
-            rank: index + 1,
-            username: data.username || "Anonymous Hunter",
-            score: Number(data.balance || 0)
-        };
-    });
+    return snapshot.docs.map((docSnap, index) => ({ rank: index + 1, username: (docSnap.data() as any).username || "Hunter", score: Number((docSnap.data() as any).balance || 0) }));
 };
 
-// FIX: Casting snap to any to resolve incorrectly inferred DocumentSnapshot instead of QuerySnapshot
 export const subscribeToCampaigns = (cb: any) => onSnapshot(collection(db, "campaigns"), (snap: any) => cb(snap.docs.map((d: any) => d.data())));
 export const subscribeToHotspots = (cb: any) => onSnapshot(collection(db, "hotspots"), (snap: any) => cb(snap.docs.map((d: any) => d.data())));
 export const saveHotspotFirebase = async (h: any) => setDoc(doc(db, "hotspots", h.id), h);
@@ -295,39 +144,24 @@ export const toggleUserBiometricSetting = async (id: string, b: boolean) => upda
 export const createCampaignFirebase = async (c: any) => setDoc(doc(db, "campaigns", c.id), c);
 export const updateCampaignStatusFirebase = async (id: string, s: string) => updateDoc(doc(db, "campaigns", id), { "data.status": s });
 export const deleteCampaignFirebase = async (id: string) => deleteDoc(doc(db, "campaigns", id));
-
-export const updateUserWalletInFirebase = async (id: number, w: string) => {
-    if (!id || !w) return;
-    try {
-        await updateDoc(doc(db, "users", id.toString()), { walletAddress: w });
-    } catch (error) {
-        console.error("Eroare salvare wallet:", error);
-    }
-};
+export const updateUserWalletInFirebase = async (id: number, w: string) => updateDoc(doc(db, "users", id.toString()), { walletAddress: w });
 
 export const resetUserInFirebase = async (targetUserId: number): Promise<{success: boolean, error?: string}> => {
+    console.log("[Firebase Service] Inițiere apel resetUserProtocol pentru:", targetUserId);
     try {
         const resetFunc = httpsCallable(functions, 'resetUserProtocol');
-        await resetFunc({ targetUserId });
+        const response: any = await resetFunc({ targetUserId });
+        console.log("[Firebase Service] Răspuns server:", response.data);
         return { success: true };
     } catch (e: any) {
-        return { success: false, error: e.message };
+        console.error("[Firebase Service] EROARE APEL FUNCȚIE:", e);
+        return { success: false, error: e.message || "Unknown Function Error" };
     }
 };
 
 export const processWithdrawTON = async (tgId: number, amount: number) => {
-    const fingerprint = await getCurrentFingerprint();
-    const cloudId = await getCloudStorageId();
-    await addDoc(collection(db, "withdrawal_requests"), { 
-        userId: Number(tgId), 
-        amount: Number(amount), 
-        status: "pending_review", 
-        timestamp: serverTimestamp(),
-        fingerprint,
-        cloudId
-    });
+    await addDoc(collection(db, "withdrawal_requests"), { userId: tgId, amount, status: "pending", timestamp: serverTimestamp() });
     return true;
 };
 
-// FIX: Casting d.data() to any to allow spreading of user data
 export const getAllUsersAdmin = async () => (await getDocs(collection(db, "users"))).docs.map(d => ({id: d.id, ...(d.data() as any)}));

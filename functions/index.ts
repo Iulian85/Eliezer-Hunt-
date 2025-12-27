@@ -12,27 +12,26 @@ if (getApps().length === 0) {
 const db = getFirestore();
 
 /**
- * RESET PROTOCOL - FORȚARE ZERO (VITEZA MAXIMĂ)
+ * RESET TOTAL LA ZERO - FĂRĂ ȘTERGERE DOCUMENT
  */
 export const resetUserProtocol = onCall(async (request) => {
+    // Extragere ID din request.data (format v2)
     const targetUserId = request.data?.targetUserId;
-    if (!targetUserId) throw new HttpsError('invalid-argument', 'ID utilizator lipsă.');
+    
+    if (!targetUserId) {
+        throw new HttpsError('invalid-argument', 'ID utilizator lipsește din cerere.');
+    }
 
     const idStr = targetUserId.toString();
 
     try {
-        console.log(`[RESET START] Hunter: ${idStr}`);
-        const userRef = db.collection('users').doc(idStr);
+        console.log(`[RESET PROTOCOL] Se execută forțarea la zero pentru: ${idStr}`);
         
-        // Verificăm dacă userul există
-        const doc = await userRef.get();
-        if (!doc.exists) {
-            throw new HttpsError('not-found', 'Utilizatorul nu a fost găsit în baza de date.');
-        }
+        const userRef = db.collection('users').doc(idStr);
 
-        // RESETĂM TOATE CÂMPURILE LA ZERO / GOL
-        // Folosim set cu merge:true pentru a fi siguri că nu pierdem statusul de Admin sau alte setări de sistem
-        await userRef.set({
+        // EXECUTĂM RESETAREA TUTUROR PARAMETRILOR SOLICITAȚI
+        await userRef.update({
+            // Balanțe și puncte
             balance: 0,
             tonBalance: 0,
             gameplayBalance: 0,
@@ -41,89 +40,94 @@ export const resetUserProtocol = onCall(async (request) => {
             dailySupplyBalance: 0,
             merchantBalance: 0,
             referralBalance: 0,
+            
+            // Statistici colectare
             adsWatched: 0,
             sponsoredAdsWatched: 0,
             rareItemsCollected: 0,
             eventItemsCollected: 0,
+            
+            // Istoric și Identificatori
+            collectedIds: [], 
+            
+            // Timp și stare
+            lastDailyClaim: 0,
+            hasClaimedReferral: false,
+            
+            // Referali (opțional, dar recomandat pt zero total)
             referrals: 0,
             referralNames: [],
-            collectedIds: [],
-            hasClaimedReferral: false,
-            lastDailyClaim: 0,
+            
+            // Activitate
             lastActive: FieldValue.serverTimestamp()
-        }, { merge: true });
+        });
 
-        console.log(`[RESET SUCCESS] Hunter ${idStr} este acum la zero.`);
+        console.log(`[RESET SUCCESS] Hunter ${idStr} a fost resetat complet la zero.`);
         return { success: true };
 
     } catch (e: any) {
-        console.error("RESET ERROR:", e);
-        throw new HttpsError('internal', e.message || 'Eroare necunoscută la resetare');
+        console.error("CRITICAL RESET ERROR:", e);
+        // Dacă documentul nu există, încercăm cu set merge:true
+        try {
+            await db.collection('users').doc(idStr).set({
+                balance: 0, tonBalance: 0, gameplayBalance: 0, rareBalance: 0,
+                eventBalance: 0, dailySupplyBalance: 0, merchantBalance: 0,
+                referralBalance: 0, adsWatched: 0, collectedIds: [], lastDailyClaim: 0
+            }, { merge: true });
+            return { success: true, warning: 'Recovered via set' };
+        } catch (innerError: any) {
+            throw new HttpsError('internal', `Eroare fatală la scriere: ${innerError.message}`);
+        }
     }
 });
 
 /**
- * TRIGGER: Procesare referali (FRENS)
+ * TRIGGER: Procesare referali
  */
 export const onReferralClaimCreated = onDocumentCreated('referral_claims/{claimId}', async (event) => {
     const snap = event.data;
     if (!snap) return;
     const claim = snap.data();
-    
     const referrerId = claim.referrerId.toString();
     const referredId = claim.referredId.toString();
     const referredName = claim.referredName || "New Hunter";
-
     try {
         const batch = db.batch();
-        const referrerRef = db.collection('users').doc(referrerId);
-        batch.set(referrerRef, {
+        batch.set(db.collection('users').doc(referrerId), {
             balance: FieldValue.increment(50),
             referralBalance: FieldValue.increment(50),
             referrals: FieldValue.increment(1),
-            referralNames: FieldValue.arrayUnion(referredName),
-            lastActive: FieldValue.serverTimestamp()
+            referralNames: FieldValue.arrayUnion(referredName)
         }, { merge: true });
-
-        const referredRef = db.collection('users').doc(referredId);
-        batch.set(referredRef, {
+        batch.set(db.collection('users').doc(referredId), {
             balance: FieldValue.increment(25),
             gameplayBalance: FieldValue.increment(25),
-            hasClaimedReferral: true,
-            lastActive: FieldValue.serverTimestamp()
+            hasClaimedReferral: true
         }, { merge: true });
-
         await batch.commit();
-        await snap.ref.update({ status: 'processed', processedAt: FieldValue.serverTimestamp() });
-    } catch (err) {
-        console.error("[Frens Engine] Error:", err);
-    }
+        await snap.ref.update({ status: 'processed' });
+    } catch (err) { console.error("Referral Error:", err); }
 });
 
 /**
- * TRIGGER: Procesare monede colectate
+ * TRIGGER: Procesare monede
  */
 export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event) => {
     const snap = event.data;
     if (!snap) return;
     const claim = snap.data();
     const userIdStr = claim.userId.toString();
-    const userRef = db.collection('users').doc(userIdStr);
-    
     try {
         const value = Number(claim.claimedValue || 0);
         const tonValue = Number(claim.tonReward || 0);
         const updates: any = {
-            telegramId: Number(claim.userId),
             balance: FieldValue.increment(value),
             tonBalance: FieldValue.increment(tonValue),
             lastActive: FieldValue.serverTimestamp()
         };
-
         if (claim.spawnId && !claim.spawnId.startsWith('ad-')) {
             updates.collectedIds = FieldValue.arrayUnion(claim.spawnId);
         }
-
         const cat = claim.category;
         if (cat === 'URBAN' || cat === 'MALL' || cat === 'GIFTBOX') updates.gameplayBalance = FieldValue.increment(value);
         else if (cat === 'LANDMARK') updates.rareBalance = FieldValue.increment(value);
@@ -134,10 +138,9 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
             updates.adsWatched = FieldValue.increment(1);
             updates.lastDailyClaim = Date.now();
         }
-
-        await userRef.set(updates, { merge: true });
-        await snap.ref.update({ status: 'verified', processedAt: FieldValue.serverTimestamp() });
-    } catch (err) { console.error("Trigger Error:", err); }
+        await db.collection('users').doc(userIdStr).set(updates, { merge: true });
+        await snap.ref.update({ status: 'verified' });
+    } catch (err) { console.error("Claim Error:", err); }
 });
 
 export const chatWithELZR = onCall(async (request) => {
