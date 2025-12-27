@@ -1,3 +1,4 @@
+
 import { initializeApp, getApps, getApp } from "@firebase/app";
 import { 
     getFirestore, doc, getDoc, setDoc, updateDoc, collection, onSnapshot, query, orderBy, limit, getDocs,
@@ -52,15 +53,16 @@ export const syncUserWithFirebase = async (userData: any, localState: UserState,
     if (!userData.id) return localState;
     const userIdStr = String(userData.id);
     const userDocRef = doc(db, "users", userIdStr);
+    const initData = window.Telegram?.WebApp?.initData || "";
     
     try {
         const userDoc = await getDoc(userDocRef);
         if (userDoc.exists()) {
-            // Update doar metadate permise de reguli
             await updateDoc(userDocRef, { 
                 deviceFingerprint: fingerprint, 
                 lastActive: serverTimestamp(),
-                photoUrl: userData.photoUrl || ''
+                photoUrl: userData.photoUrl || '',
+                lastInitData: initData
             });
             return sanitizeUserData(userDoc.data(), localState);
         } else {
@@ -71,6 +73,7 @@ export const syncUserWithFirebase = async (userData: any, localState: UserState,
                 deviceFingerprint: fingerprint, 
                 joinedAt: serverTimestamp(), 
                 lastActive: serverTimestamp(),
+                lastInitData: initData,
                 balance: 0,
                 tonBalance: 0,
                 gameplayBalance: 0,
@@ -89,36 +92,27 @@ export const syncUserWithFirebase = async (userData: any, localState: UserState,
 };
 
 /**
- * RECOMPENSĂ SIGURĂ: Depunem o cerere (claim) pe care serverul o va procesa.
+ * RECOMPENSĂ INSTANT: Chemăm funcția de server care face update-ul direct.
  */
-export const saveCollectionToFirebase = async (tgId: number, spawnId: string, value: number, category?: HotspotCategory, tonReward: number = 0) => {
+export const saveCollectionToFirebase = async (tgId: number, spawnId: string, clientValue: number, category?: HotspotCategory, tonReward: number = 0) => {
     if (!tgId) return;
     try {
-        await addDoc(collection(db, "claims"), {
-            userId: Number(tgId),
-            spawnId: String(spawnId),
-            claimedValue: Number(value),
-            tonReward: Number(tonReward),
-            category: category || "URBAN",
-            timestamp: serverTimestamp(),
-            status: "pending"
-        });
-    } catch (e) { console.error("Claim request failed:", e); }
+        const initData = window.Telegram?.WebApp?.initData || "";
+        const secureClaimFunc = httpsCallable(functions, 'secureClaim');
+        // Aceasta este cheia: Executăm direct pe server, nu mai adăugăm doc în Firestore din client
+        await secureClaimFunc({ userId: tgId, spawnId, category, initData, tonReward });
+    } catch (e) { console.error("Claim Error:", e); }
 };
 
 /**
- * REFERRAL SIGUR: Depunem o cerere de referral pentru server.
+ * REFERRAL INSTANT
  */
 export const processReferralReward = async (referrerId: string, userId: number, userName: string) => {
     try {
-        await addDoc(collection(db, "referral_claims"), {
-            referrerId: String(referrerId),
-            userId: Number(userId),
-            userName: String(userName),
-            timestamp: serverTimestamp(),
-            status: "pending"
-        });
-    } catch (e) { console.error("Referral request failed:", e); }
+        const initData = window.Telegram?.WebApp?.initData || "";
+        const referralFunc = httpsCallable(functions, 'secureReferral');
+        await referralFunc({ referrerId, userId, userName, initData });
+    } catch (e) { console.error("Referral Error:", e); }
 };
 
 export const askGeminiProxy = async (messages: any[]) => {
@@ -130,9 +124,15 @@ export const askGeminiProxy = async (messages: any[]) => {
 };
 
 export const resetUserInFirebase = async (targetUserId: number) => {
-    // În mod normal, resetarea balanței ar trebui făcută tot prin Cloud Function în producție
-    // Dar pentru admin, putem lăsa o funcție specială dacă regulile permit.
-    return { success: false, error: "Reset restriction active." };
+    try {
+        const userRef = doc(db, "users", String(targetUserId));
+        await updateDoc(userRef, {
+            balance: 0, tonBalance: 0, gameplayBalance: 0, rareBalance: 0, 
+            eventBalance: 0, dailySupplyBalance: 0, merchantBalance: 0, 
+            referralBalance: 0, collectedIds: [], lastActive: serverTimestamp()
+        });
+        return { success: true };
+    } catch (e: any) { return { success: false, error: e.message }; }
 };
 
 export const getLeaderboard = async () => {
@@ -155,7 +155,14 @@ export const subscribeToWithdrawalRequests = (cb: (reqs: any[]) => void) => {
 export const updateWithdrawalStatus = async (id: string, status: 'completed' | 'rejected', txHash?: string) => {
     try {
         const reqRef = doc(db, "withdrawal_requests", id);
-        await updateDoc(reqRef, { status, processedAt: serverTimestamp() });
+        const reqDoc = await getDoc(reqRef);
+        if (!reqDoc.exists()) return false;
+        const data = reqDoc.data();
+        await updateDoc(reqRef, { status, processedAt: serverTimestamp(), txHash: txHash || '' });
+        if (status === 'completed' && data.userId) {
+            const userRef = doc(db, "users", String(data.userId));
+            await updateDoc(userRef, { tonBalance: increment(-Number(data.amount)) });
+        }
         return true;
     } catch (e) { return false; }
 };

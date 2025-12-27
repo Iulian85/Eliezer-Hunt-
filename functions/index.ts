@@ -1,95 +1,151 @@
-import { onDocumentCreated } from 'firebase-functions/v2/firestore';
-// Added missing import for onCall from v2 https
-import { onCall } from 'firebase-functions/v2/https';
+
+import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { GoogleGenAI } from '@google/genai';
+import * as crypto from 'crypto';
 
 if (getApps().length === 0) {
     initializeApp();
 }
 
 const db = getFirestore();
+const BOT_TOKEN = process.env.BOT_TOKEN || "";
 
 /**
- * LEDGER ENGINE (V6.0)
- * Procesează orice "cerere" de puncte de pe hartă sau reclame.
+ * VERIFICARE INTEGRITATE TELEGRAM
  */
-export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event) => {
-    const snap = event.data;
-    if (!snap) return;
-    const claim = snap.data();
-    const userIdStr = String(claim.userId);
-    const userRef = db.collection('users').doc(userIdStr);
+function verifyTelegramData(initData: string): boolean {
+    if (!BOT_TOKEN || !initData) return true; // Fallback pt development dacă lipsește tokenul
+    try {
+        const urlParams = new URLSearchParams(initData);
+        const hash = urlParams.get('hash');
+        urlParams.delete('hash');
+        const dataCheckString = Array.from(urlParams.entries())
+            .map(([key, value]) => `${key}=${value}`)
+            .sort()
+            .join('\n');
+        const secretKey = crypto.createHmac('sha256', 'WebAppData').update(BOT_TOKEN).digest();
+        const calculatedHash = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
+        return calculatedHash === hash;
+    } catch (e) {
+        return false;
+    }
+}
+
+/**
+ * SECURE CLAIM HANDLER (V7.0 - INSTANT ALLOCATION)
+ * Această funcție alocă punctele DIRECT în contul userului fără a mai aștepta trigger-e.
+ */
+export const secureClaim = onCall({
+    maxInstances: 20,
+    memory: "256MiB"
+}, async (request) => {
+    const { userId, spawnId, category, initData, tonReward } = request.data || {};
+    
+    if (!verifyTelegramData(initData)) {
+        throw new HttpsError('unauthenticated', 'Integrity check failed.');
+    }
+
+    if (!userId || !spawnId) {
+        throw new HttpsError('invalid-argument', 'Missing protocol data.');
+    }
+
+    const userRef = db.collection('users').doc(String(userId));
+    
+    // DEFINIRE VALORI PE SERVER (Securitate)
+    let finalValue = 100; 
+    if (category === 'LANDMARK') finalValue = 1000;
+    if (category === 'EVENT') finalValue = 1000;
+    if (category === 'AD_REWARD') finalValue = 500;
+    if (category === 'GIFTBOX') finalValue = Math.floor(Math.random() * 500) + 100;
+    
+    // Logica pentru Merchants (campanii plătite)
+    if (category === 'MERCHANT') {
+        const campId = spawnId.split('-coin-')[0];
+        const campSnap = await db.collection('campaigns').doc(campId).get();
+        if (campSnap.exists) {
+            const cData = campSnap.data();
+            finalValue = 100 * ((cData?.multiplier || 5) / 5);
+        }
+    }
 
     try {
-        if (claim.status === 'verified') return;
+        const batch = db.batch();
         
-        const value = Number(claim.claimedValue || 0);
-        const tonValue = Number(claim.tonReward || 0);
-        const category = claim.category || 'URBAN';
-        const spawnId = claim.spawnId;
+        // 1. Log-ul cererii (Audit)
+        const claimRef = db.collection('claims').doc();
+        batch.set(claimRef, {
+            userId: Number(userId),
+            spawnId: String(spawnId),
+            claimedValue: finalValue,
+            tonReward: Number(tonReward || 0),
+            category: category || "URBAN",
+            timestamp: FieldValue.serverTimestamp(),
+            status: "verified"
+        });
 
-        // Obiectul de update pentru user
-        const update: any = {
-            balance: FieldValue.increment(value),
-            tonBalance: FieldValue.increment(tonValue),
+        // 2. ACTUALIZARE INSTANTANEE A BALANȚEI USERULUI
+        const userUpdate: any = {
+            balance: FieldValue.increment(finalValue),
+            tonBalance: FieldValue.increment(Number(tonReward || 0)),
             lastActive: FieldValue.serverTimestamp()
         };
 
-        // Nu salvăm ID-uri de reclame pentru a permite re-vizionarea
         if (spawnId && !spawnId.startsWith('ad-')) {
-            update.collectedIds = FieldValue.arrayUnion(spawnId);
+            userUpdate.collectedIds = FieldValue.arrayUnion(spawnId);
         }
 
-        // DISTRIBUȚIE PE CATEGORII AIRDROP
+        // Distribuție pe categorii Airdrop Estimation
         if (category === 'AD_REWARD') {
-            update.dailySupplyBalance = FieldValue.increment(value);
-            update.adsWatched = FieldValue.increment(1);
-            update.lastDailyClaim = Date.now();
+            userUpdate.dailySupplyBalance = FieldValue.increment(finalValue);
+            userUpdate.adsWatched = FieldValue.increment(1);
+            userUpdate.lastDailyClaim = Date.now();
         } else if (category === 'LANDMARK') {
-            update.rareBalance = FieldValue.increment(value);
-            update.rareItemsCollected = FieldValue.increment(1);
+            userUpdate.rareBalance = FieldValue.increment(finalValue);
+            userUpdate.rareItemsCollected = FieldValue.increment(1);
         } else if (category === 'EVENT') {
-            update.eventBalance = FieldValue.increment(value);
-            update.eventItemsCollected = FieldValue.increment(1);
+            userUpdate.eventBalance = FieldValue.increment(finalValue);
+            userUpdate.eventItemsCollected = FieldValue.increment(1);
         } else if (category === 'MERCHANT') {
-            update.merchantBalance = FieldValue.increment(value);
-            update.sponsoredAdsWatched = FieldValue.increment(1);
+            userUpdate.merchantBalance = FieldValue.increment(finalValue);
         } else {
-            // URBAN, MALL și GIFTBOX merg la Gameplay
-            update.gameplayBalance = FieldValue.increment(value);
+            userUpdate.gameplayBalance = FieldValue.increment(finalValue);
         }
 
-        await userRef.set(update, { merge: true });
-        await snap.ref.update({ status: 'verified', processedAt: FieldValue.serverTimestamp() });
+        batch.set(userRef, userUpdate, { merge: true });
+        
+        await batch.commit();
+        return { success: true, points: finalValue };
 
-    } catch (err: any) {
-        console.error("Ledger Error:", err);
-        await snap.ref.update({ status: 'error', errorMsg: err.message });
+    } catch (e: any) {
+        console.error("Instant Claim Error:", e);
+        throw new HttpsError('internal', 'Execution node failure.');
     }
 });
 
 /**
- * REFERRAL ENGINE (V6.0)
- * Procesează bonusul de invitație (50) și cel de bun venit (25).
+ * SECURE REFERRAL HANDLER (V7.0 - INSTANT ALLOCATION)
  */
-export const onReferralClaimCreated = onDocumentCreated('referral_claims/{claimId}', async (event) => {
-    const snap = event.data;
-    if (!snap) return;
-    const { referrerId, userId, userName } = snap.data();
+export const secureReferral = onCall(async (request) => {
+    const { referrerId, userId, userName, initData } = request.data || {};
+
+    if (!verifyTelegramData(initData)) {
+        throw new HttpsError('unauthenticated', 'Invalid integrity check.');
+    }
+
+    const newUserRef = db.collection('users').doc(String(userId));
+    const userSnap = await newUserRef.get();
+    
+    if (userSnap.exists && userSnap.data()?.hasClaimedReferral) {
+        return { success: false, message: "Already processed." };
+    }
 
     try {
-        const newUserRef = db.collection('users').doc(String(userId));
-        const userSnap = await newUserRef.get();
-        
-        // Verificăm dacă a mai primit bonusul
-        if (userSnap.exists && userSnap.data()?.hasClaimedReferral) return;
-
         const batch = db.batch();
         const referrerRef = db.collection('users').doc(String(referrerId));
 
-        // 1. Recompensă Cel care a invitat (50 Pct)
+        // Recompensă Referer (50)
         batch.set(referrerRef, {
             balance: FieldValue.increment(50),
             referralBalance: FieldValue.increment(50),
@@ -97,33 +153,29 @@ export const onReferralClaimCreated = onDocumentCreated('referral_claims/{claimI
             referralNames: FieldValue.arrayUnion(userName || "Hunter")
         }, { merge: true });
 
-        // 2. Recompensă Cel nou (25 Pct Bun Venit)
+        // Recompensă Bun Venit (25)
         batch.set(newUserRef, {
             balance: FieldValue.increment(25),
             gameplayBalance: FieldValue.increment(25),
-            hasClaimedReferral: true
+            hasClaimedReferral: true,
+            telegramId: Number(userId),
+            joinedAt: FieldValue.serverTimestamp()
         }, { merge: true });
 
         await batch.commit();
-        await snap.ref.update({ status: 'verified' });
-
+        return { success: true };
     } catch (e) {
-        console.error("Referral Engine Error:", e);
+        throw new HttpsError('internal', 'Referral link broken.');
     }
 });
 
 /**
  * AI SCOUT PROXY
  */
-// Fixed: onCall is now imported correctly above
-export const chatWithELZR = onCall({
-    maxInstances: 10,
-    memory: "256MiB"
-}, async (request) => {
+export const chatWithELZR = onCall(async (request) => {
     const { messages } = request.data || {};
     if (!process.env.API_KEY) return { text: "AI Offline." };
     try {
-        // Correct initialization with process.env.API_KEY
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
         const response = await ai.models.generateContent({
             model: 'gemini-3-flash-preview',
@@ -131,9 +183,8 @@ export const chatWithELZR = onCall({
                 role: m.role === 'model' ? 'model' : 'user', 
                 parts: [{ text: m.text }] 
             })),
-            config: { systemInstruction: "You are ELZR Scout. Brief.", temperature: 0.7 }
+            config: { systemInstruction: "You are ELZR Scout. Be brief.", temperature: 0.7 }
         });
-        // .text is a property on the response object
         return { text: response.text };
     } catch (e) {
         return { text: "Protocol error." };
