@@ -1,10 +1,11 @@
+
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Campaign, AdStatus, HotspotDefinition, HotspotCategory, Coordinate } from '../types';
 import { ShieldCheck, Check, X, Play, Clock, AlertTriangle, Users, Ban, Wallet, Globe, Search, Lock, Unlock, LayoutDashboard, Megaphone, BarChart3, Settings, Trash2, UserX, FlaskConical, MapPin, Plus, Edit2, Coins, Map as MapIcon, Upload, Image as ImageIcon, Loader2, Gift, Calendar, Activity, History, RotateCcw, AlertCircle, Fingerprint, RefreshCw } from 'lucide-react';
 import { UniversalVideoPlayer } from '../components/UniversalVideoPlayer';
 import { MapContainer, TileLayer, Marker, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
-import { getAllUsersAdmin, deleteUserFirebase, toggleUserBan, resetUserInFirebase, toggleUserBiometricSetting } from '../services/firebase';
+import { getAllUsersAdmin, deleteUserFirebase, toggleUserBan, resetUserInFirebase, toggleUserBiometricSetting, clearCloudStorageId } from '../services/firebase';
 
 interface AdminViewProps {
     allCampaigns: Campaign[];
@@ -69,18 +70,24 @@ export const AdminView: React.FC<AdminViewProps> = ({
         return new Intl.DateTimeFormat('en-US', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(ts);
     };
 
-    const handleDeleteUser = async (id: string) => {
-        if (window.confirm(`CRITICAL WARNING: Permanently delete user ${id}? This action IS IRREVERSIBLE.`)) {
-            await deleteUserFirebase(id);
-            setUsers(prev => prev.filter(u => u.id !== id));
-        }
-    };
-
     const handleResetUserAccount = async (id: string) => {
-        if (window.confirm(`ACCOUNT RESET: Clear all extraction progress for user ${id}?`)) {
-            await resetUserInFirebase(parseInt(id));
-            alert("Account progress has been reset.");
-            loadUsers();
+        if (window.confirm(`NUCLEAR RESET: This will purge EVERYTHING for user ${id}. They will be treated as a brand new user (can re-use referral links). Proceed?`)) {
+            setIsLoadingUsers(true);
+            const tgIdNum = parseInt(id);
+            const result = await resetUserInFirebase(tgIdNum);
+            
+            if (result.success) {
+                // Dacă ne resetăm pe noi înșine, curățăm și CloudStorage
+                const myId = window.Telegram?.WebApp?.initDataUnsafe?.user?.id;
+                if (tgIdNum === myId) {
+                    await clearCloudStorageId();
+                }
+                alert("Identity and History Purged. Reloading Node...");
+                window.location.reload();
+            } else {
+                alert("Reset Failed: " + result.error);
+                setIsLoadingUsers(false);
+            }
         }
     };
 
@@ -531,7 +538,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                                                     </button>
                                                    
                                                     <button
-                                                        onClick={() => handleDeleteUser(user.id)}
+                                                        onClick={() => handleResetUserAccount(user.id)}
                                                         className="p-3 bg-red-600/10 text-red-500 rounded-2xl border-2 border-red-600/30 active:scale-90 hover:bg-red-600/20 shadow-lg"
                                                         title="Delete Account Permanently"
                                                     >

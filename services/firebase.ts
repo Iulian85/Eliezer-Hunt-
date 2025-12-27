@@ -65,6 +65,18 @@ export const getCloudStorageId = (): Promise<string> => {
     });
 };
 
+export const clearCloudStorageId = (): Promise<void> => {
+    return new Promise((resolve) => {
+        const tg = window.Telegram?.WebApp;
+        if (!tg?.CloudStorage) {
+            resolve();
+            return;
+        }
+        // Purjăm UUID-ul pentru a simula un dispozitiv complet nou
+        tg.CloudStorage.setItem('elzr_uuid', '', () => resolve());
+    });
+};
+
 export const askGeminiProxy = async (messages: any[]) => {
     const fingerprint = await getCurrentFingerprint();
     const cloudId = await getCloudStorageId();
@@ -236,7 +248,6 @@ export const processReferralReward = async (referrerId: string, newUserId: numbe
     if (!referrerId || !newUserId) return;
     
     try {
-        // 1. Creăm cererea de referal în colecția dedicată
         const claimRef = doc(collection(db, "referral_claims"));
         await setDoc(claimRef, {
             referrerId: referrerId.toString(),
@@ -246,7 +257,6 @@ export const processReferralReward = async (referrerId: string, newUserId: numbe
             status: "pending"
         });
         
-        // 2. Marcăm local utilizatorul că a folosit deja un cod (pentru a preveni buclele)
         await updateDoc(doc(db, "users", newUserId.toString()), {
             hasClaimedReferral: true
         });
@@ -289,21 +299,8 @@ export const updateUserWalletInFirebase = async (id: number, w: string) => {
 
 export const resetUserInFirebase = async (targetUserId: number): Promise<{success: boolean, error?: string}> => {
     try {
-        const userRef = doc(db, "users", targetUserId.toString());
-        await updateDoc(userRef, {
-            balance: 0,
-            tonBalance: 0,
-            gameplayBalance: 0,
-            rareBalance: 0,
-            eventBalance: 0,
-            dailySupplyBalance: 0,
-            merchantBalance: 0,
-            referralBalance: 0,
-            collectedIds: [],
-            lastDailyClaim: 0,
-            referrals: 0,
-            referralNames: []
-        });
+        const resetFunc = httpsCallable(functions, 'resetUserProtocol');
+        await resetFunc({ targetUserId });
         return { success: true };
     } catch (e: any) {
         return { success: false, error: e.message };
