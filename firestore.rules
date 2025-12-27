@@ -3,51 +3,27 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    match /used_nonces/{nonceId} {
-      allow read: if false;
-      allow write: if false;
-    }
-
     match /users/{userId} {
       allow read: if true; 
       allow create: if true;
-      allow update: if true; 
-      allow delete: if true; 
-
-      match /security_logs/{logId} {
-        allow read, write: if false;
-      }
+      allow update: if true; // Permitem update-ul direct pentru balanțe (User experience priority)
     }
     
     match /claims/{claimId} {
-      allow create: if true;
-      allow read, update, delete: if true;
-    }
-
-    match /ad_claims/{claimId} {
-      allow create: if true;
-      allow read, update, delete: if true;
-    }
-
-    match /referral_claims/{claimId} {
-      allow create: if true;
-      allow read, update, delete: if true;
+      allow read, create: if true;
     }
 
     match /withdrawal_requests/{reqId} {
       allow create: if true;
-      allow read, update, delete: if true;
+      allow read: if true;
     }
     
     match /campaigns/{campId} {
-      allow read: if true;
-      allow write: if true;
-      allow delete: if true;
+      allow read, write: if true; 
     }
 
     match /hotspots/{hId} {
-      allow get, list: if true;
-      allow write, delete: if true;
+      allow read, write: if true;
     }
   }
 }
