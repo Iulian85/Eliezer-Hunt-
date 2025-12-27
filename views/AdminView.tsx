@@ -1,11 +1,10 @@
-
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Campaign, AdStatus, HotspotDefinition, HotspotCategory, Coordinate } from '../types';
-import { ShieldCheck, Check, X, Play, Clock, AlertTriangle, Users, Ban, Wallet, Globe, Search, Lock, Unlock, LayoutDashboard, Megaphone, BarChart3, Settings, Trash2, UserX, FlaskConical, MapPin, Plus, Edit2, Coins, Map as MapIcon, Upload, Image as ImageIcon, Loader2, Gift, Calendar, Activity, History, RotateCcw, AlertCircle, Fingerprint, RefreshCw } from 'lucide-react';
+import { ShieldCheck, Check, X, Play, Clock, AlertTriangle, Users, Ban, Wallet, Globe, Search, Lock, Unlock, LayoutDashboard, Megaphone, BarChart3, Settings, Trash2, UserX, FlaskConical, MapPin, Plus, Edit2, Coins, Map as MapIcon, Upload, Image as ImageIcon, Loader2, Gift, Calendar, Activity, History, RotateCcw, AlertCircle, Fingerprint, RefreshCw, Send, Target, Crown, Sparkles, UserCheck } from 'lucide-react';
 import { UniversalVideoPlayer } from '../components/UniversalVideoPlayer';
 import { MapContainer, TileLayer, Marker, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
-import { getAllUsersAdmin, deleteUserFirebase, toggleUserBan, resetUserInFirebase, toggleUserBiometricSetting } from '../services/firebase';
+import { getAllUsersAdmin, deleteUserFirebase, toggleUserBan, resetUserInFirebase, toggleUserBiometricSetting, markUserAirdropped } from '../services/firebase';
 
 interface AdminViewProps {
     allCampaigns: Campaign[];
@@ -32,11 +31,12 @@ const LocationPicker = ({ coords, onPick }: { coords: Coordinate, onPick: (c: Co
 export const AdminView: React.FC<AdminViewProps> = ({
     allCampaigns, customHotspots, onSaveHotspots, onDeleteHotspot, onDeleteCampaign, onApprove, onReject, onResetMyAccount, isTestMode, onToggleTestMode
 }) => {
-    const [activeTab, setActiveTab] = useState<'dashboard' | 'users' | 'ads' | 'hotspots' | 'giftboxes' | 'system'>('dashboard');
+    const [activeTab, setActiveTab] = useState<'dashboard' | 'users' | 'ads' | 'hotspots' | 'giftboxes' | 'airdrop' | 'system'>('dashboard');
     const [users, setUsers] = useState<any[]>([]);
     const [isLoadingUsers, setIsLoadingUsers] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [previewVideo, setPreviewVideo] = useState<string | null>(null);
+    const [isProcessingAirdrop, setIsProcessingAirdrop] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     // Hotspot State
@@ -53,7 +53,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
     const prizeOptions = [0.05, 0.5, 1, 10, 100];
 
     useEffect(() => {
-        if (activeTab === 'users' || activeTab === 'dashboard') {
+        if (activeTab === 'users' || activeTab === 'dashboard' || activeTab === 'airdrop') {
             loadUsers();
         }
     }, [activeTab]);
@@ -67,7 +67,6 @@ export const AdminView: React.FC<AdminViewProps> = ({
 
     const formatDate = (ts?: any) => {
         if (!ts) return 'N/A';
-        // Handle Firestore Timestamp
         const date = ts.toDate ? ts.toDate() : new Date(ts);
         return new Intl.DateTimeFormat('en-US', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(date);
     };
@@ -104,6 +103,21 @@ export const AdminView: React.FC<AdminViewProps> = ({
         if (window.confirm(msg)) {
             await toggleUserBiometricSetting(id, newStatus);
             setUsers(prev => prev.map(u => u.id === id ? { ...u, biometricEnabled: newStatus } : u));
+        }
+    };
+
+    const handleExecuteAirdrop = async (user: any, allocation: number) => {
+        if (!user.walletAddress) return alert("User has no wallet connected.");
+        if (window.confirm(`EXECUTE AIRDROP: Send ${allocation.toFixed(8)} $ELZR to ${user.walletAddress}?`)) {
+            setIsProcessingAirdrop(user.id);
+            const success = await markUserAirdropped(user.id, allocation);
+            setIsProcessingAirdrop(null);
+            if (success) {
+                alert("Airdrop logic triggered! User marked as paid.");
+                loadUsers();
+            } else {
+                alert("System error. Payment node failed.");
+            }
         }
     };
 
@@ -198,6 +212,29 @@ export const AdminView: React.FC<AdminViewProps> = ({
             (u.id || '').toLowerCase().includes(searchQuery.toLowerCase())
         );
     }, [users, searchQuery]);
+
+    const qualifiedHunters = useMemo(() => {
+        return users.filter(u => {
+            if (u.isAirdropped) return false;
+            
+            // TOATE categoriile sunt obligatorii
+            const hasGameplay = (u.gameplayBalance > 0);
+            const hasRare = (u.rareBalance > 0);
+            const hasEvent = (u.eventBalance > 0);
+            const hasMerchant = (u.merchantBalance > 0);
+            
+            // Minim 365 reclame vizionate (Daily Supply consistency)
+            const hasDailySupply = (u.adsWatched >= 365);
+            
+            // Minim 10 referali
+            const hasReferrals = (u.referrals >= 10);
+            
+            // Adresa de wallet este obligatorie pentru plata
+            const hasWallet = !!u.walletAddress;
+
+            return hasGameplay && hasRare && hasEvent && hasMerchant && hasDailySupply && hasReferrals && hasWallet;
+        });
+    }, [users]);
 
     const activeGiftBoxes = useMemo(() => {
         return customHotspots.filter(h => h.category === 'GIFTBOX');
@@ -443,6 +480,93 @@ export const AdminView: React.FC<AdminViewProps> = ({
         </div>
     );
 
+    const renderAirdropTab = () => (
+        <div className="space-y-6 pb-32">
+            <div className="flex flex-col gap-2 px-1">
+                <h3 className="text-white font-black flex items-center gap-2 uppercase tracking-tighter text-lg">
+                    <Send size={22} className="text-cyan-400" /> Airdrop Execution Node
+                </h3>
+                <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Qualified Hunters ({qualifiedHunters.length})</p>
+            </div>
+
+            {qualifiedHunters.length === 0 ? (
+                <div className="bg-slate-900/50 border border-dashed border-slate-800 rounded-[2.5rem] py-20 flex flex-col items-center text-center px-10">
+                    <UserCheck size={48} className="text-slate-700 mb-4" />
+                    <h4 className="text-white font-bold uppercase mb-2">No qualified hunters</h4>
+                    <p className="text-[10px] text-slate-500 uppercase font-black leading-relaxed">System monitoring active. Hunters must meet ALL criteria (Gameplay, Rare, Event, Merchant, 365+ Ads, 10+ Frens) to qualify.</p>
+                </div>
+            ) : (
+                <div className="space-y-4">
+                    {qualifiedHunters.map(u => {
+                        const refMultiplier = Math.min(2.5, 1 + (Math.log10((u.referrals || 0) + 1) / 4));
+                        const totalWeightedScore = Math.floor((u.balance || 0) * refMultiplier);
+                        const allocation = totalWeightedScore / 1000000000000;
+
+                        return (
+                            <div key={u.id} className="bg-slate-900 border-2 border-slate-800 rounded-[2.5rem] p-6 shadow-2xl relative overflow-hidden group">
+                                <div className="absolute -right-12 -top-12 bg-cyan-500/5 w-40 h-40 rounded-full blur-3xl"></div>
+                                
+                                <div className="flex justify-between items-start mb-6 relative z-10">
+                                    <div className="flex items-center gap-4">
+                                        <div className="w-14 h-14 rounded-[1.2rem] bg-slate-800 border-2 border-slate-700 flex items-center justify-center overflow-hidden shadow-xl">
+                                            {u.photoUrl ? <img src={u.photoUrl} className="w-full h-full object-cover" /> : <Users className="text-cyan-400" size={24} />}
+                                        </div>
+                                        <div>
+                                            <h4 className="text-white font-black text-sm uppercase tracking-tighter leading-none mb-1">{u.username || 'Anon Hunter'}</h4>
+                                            <div className="flex items-center gap-1.5">
+                                                <Wallet size={10} className="text-slate-500" />
+                                                <span className="text-[9px] text-slate-500 font-mono font-bold">{u.walletAddress?.slice(0, 6)}...{u.walletAddress?.slice(-4)}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="text-right">
+                                        <span className="text-[10px] text-slate-500 font-black uppercase tracking-widest block mb-1">Allocation</span>
+                                        <div className="text-xl font-black text-cyan-400 font-mono">{allocation.toFixed(8)}</div>
+                                        <span className="text-[8px] text-slate-600 font-black uppercase">ELZR</span>
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-4 gap-2 mb-6 relative z-10">
+                                    <div className={`p-2 rounded-xl border flex flex-col items-center justify-center ${u.adsWatched >= 365 ? 'bg-green-500/10 border-green-500/20 text-green-400' : 'bg-red-500/10 border-red-500/20 text-red-400'}`}>
+                                        <Clock size={12} className="mb-1" />
+                                        <span className="text-[8px] font-black">{u.adsWatched}/365</span>
+                                    </div>
+                                    <div className={`p-2 rounded-xl border flex flex-col items-center justify-center ${u.referrals >= 10 ? 'bg-green-500/10 border-green-500/20 text-green-400' : 'bg-red-500/10 border-red-500/20 text-red-400'}`}>
+                                        <Users size={12} className="mb-1" />
+                                        <span className="text-[8px] font-black">{u.referrals}/10</span>
+                                    </div>
+                                    <div className={`p-2 rounded-xl border flex flex-col items-center justify-center ${u.gameplayBalance > 0 ? 'bg-green-500/10 border-green-500/20 text-green-400' : 'bg-red-500/10 border-red-500/20 text-red-400'}`}>
+                                        <Target size={12} className="mb-1" />
+                                        <span className="text-[8px] font-black">GAME</span>
+                                    </div>
+                                    <div className={`p-2 rounded-xl border flex flex-col items-center justify-center ${u.rareBalance > 0 && u.eventBalance > 0 && u.merchantBalance > 0 ? 'bg-green-500/10 border-green-500/20 text-green-400' : 'bg-red-500/10 border-red-500/20 text-red-400'}`}>
+                                        <Crown size={12} className="mb-1" />
+                                        <span className="text-[8px] font-black">EXTRA</span>
+                                    </div>
+                                </div>
+
+                                <button 
+                                    onClick={() => handleExecuteAirdrop(u, allocation)}
+                                    disabled={isProcessingAirdrop === u.id}
+                                    className="w-full py-4 bg-white text-black font-black rounded-2xl flex items-center justify-center gap-3 transition-all active:scale-95 shadow-xl disabled:opacity-50 uppercase tracking-widest text-[10px]"
+                                >
+                                    {isProcessingAirdrop === u.id ? <Loader2 className="animate-spin" size={16}/> : <Send size={16} />}
+                                    Initiate ELZR Payout
+                                </button>
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
+            
+            <div className="bg-amber-500/10 border-2 border-amber-500/20 p-6 rounded-[2.5rem] relative overflow-hidden">
+                <AlertTriangle className="text-amber-500 mb-4" size={32} />
+                <h4 className="text-amber-200 font-black uppercase text-sm mb-2 tracking-tighter">Protocol Security Notice</h4>
+                <p className="text-[10px] text-amber-500/80 font-bold leading-relaxed uppercase tracking-wide">The Airdrop button initiates the TON Minter smart contract node. Ensure your admin balance is sufficient for gas fees. This action marks the hunter as "Extracted" and cannot be reversed.</p>
+            </div>
+        </div>
+    );
+
     return (
         <div className="h-full w-full bg-slate-950 flex flex-col">
             <div className="bg-slate-900 border-b border-slate-800 p-4 pb-0">
@@ -456,6 +580,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                     <button onClick={() => setActiveTab('ads')} className={`pb-3 text-sm font-bold border-b-2 whitespace-nowrap ${activeTab === 'ads' ? 'border-cyan-400 text-white' : 'border-transparent text-slate-500'}`}>Ads</button>
                     <button onClick={() => setActiveTab('hotspots')} className={`pb-3 text-sm font-bold border-b-2 whitespace-nowrap ${activeTab === 'hotspots' ? 'border-cyan-400 text-white' : 'border-transparent text-slate-500'}`}>Hotspots</button>
                     <button onClick={() => setActiveTab('giftboxes')} className={`pb-3 text-sm font-bold border-b-2 whitespace-nowrap ${activeTab === 'giftboxes' ? 'border-amber-400 text-amber-400' : 'border-transparent text-slate-500'}`}>Gift Boxes</button>
+                    <button onClick={() => setActiveTab('airdrop')} className={`pb-3 text-sm font-bold border-b-2 whitespace-nowrap ${activeTab === 'airdrop' ? 'border-cyan-400 text-cyan-400' : 'border-transparent text-slate-500'}`}>Airdrop</button>
                     <button onClick={() => setActiveTab('system')} className={`pb-3 text-sm font-bold border-b-2 whitespace-nowrap ${activeTab === 'system' ? 'border-red-400 text-red-400' : 'border-transparent text-slate-500'}`}>System</button>
                 </div>
             </div>
@@ -620,6 +745,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                 {activeTab === 'ads' && renderAdsTab()}
                 {activeTab === 'hotspots' && renderHotspotsTab()}
                 {activeTab === 'giftboxes' && renderGiftBoxesTab()}
+                {activeTab === 'airdrop' && renderAirdropTab()}
                 {activeTab === 'system' && (
                     <div className="bg-red-950/20 border border-red-900/50 p-6 rounded-2xl">
                         <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2"><AlertTriangle className="text-red-500" /> DANGER ZONE</h2>

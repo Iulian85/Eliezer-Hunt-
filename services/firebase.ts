@@ -222,6 +222,20 @@ export const getLeaderboard = async () => {
     }));
 };
 
+export const markUserAirdropped = async (id: string, amount: number) => {
+    try {
+        const userRef = doc(db, "users", String(id));
+        await updateDoc(userRef, {
+            isAirdropped: true,
+            airdropAmount: amount,
+            airdropTimestamp: serverTimestamp()
+        });
+        return true;
+    } catch (e) {
+        return false;
+    }
+};
+
 export const subscribeToCampaigns = (cb: any) => onSnapshot(collection(db, "campaigns"), snap => cb(snap.docs.map(d => d.data())));
 export const subscribeToHotspots = (cb: any) => onSnapshot(collection(db, "hotspots"), snap => cb(snap.docs.map(d => d.data())));
 export const saveHotspotFirebase = async (h: any) => setDoc(doc(db, "hotspots", h.id), h);
