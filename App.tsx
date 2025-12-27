@@ -21,7 +21,8 @@ import {
     deleteHotspotFirebase,
     updateUserWalletInFirebase,
     resetUserInFirebase,
-    getCloudStorageId
+    getCloudStorageId,
+    clearCloudStorageId
 } from './services/firebase';
 import { MapView } from './views/MapView';
 import { HuntView } from './views/HuntView';
@@ -259,9 +260,10 @@ function App() {
     }, []);
 
     const handleResetAccount = async () => {
-        if (window.confirm("RESET ACCOUNT: Are you sure?")) {
+        if (window.confirm("NUCLEAR RESET: Ștergi definitiv activitatea și reîncepi onboarding-ul?")) {
             if (userState.telegramId) {
                 await resetUserInFirebase(userState.telegramId);
+                await clearCloudStorageId();
                 window.location.reload();
             }
         }
