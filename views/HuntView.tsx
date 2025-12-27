@@ -13,7 +13,7 @@ interface HuntViewProps {
     location: Coordinate;
     spawns: SpawnPoint[];
     collectedIds: string[];
-    onCollect: (id: string, value: number, category?: any) => void;
+    onCollect: (id: string, value: number, category?: any, tonReward?: number) => void;
     hotspots: HotspotDefinition[];
 }
 
@@ -33,7 +33,8 @@ export const HuntView: React.FC<HuntViewProps> = ({ location, spawns, collectedI
             isLandmark: h.category === 'EVENT' || h.category === 'LANDMARK',
             logoUrl: h.logoUrl,
             customText: h.customText,
-            sponsorData: (h as any).sponsorData
+            sponsorData: (h as any).sponsorData,
+            prizes: h.prizes
         }));
 
         return [...spawns, ...hotspotSpawns];
@@ -56,29 +57,24 @@ export const HuntView: React.FC<HuntViewProps> = ({ location, spawns, collectedI
         if (closest) {
             setNearestSpawn({ spawn: closest, dist: minDesc });
         } else {
-            // Keep the previous one if in AR mode to prevent component flicker and premature exit
             if (!arMode) setNearestSpawn(null);
         }
     }, [location, allAvailableTargets, collectedIds, arMode]);
 
     const handleARCollect = (points: number, tonReward: number = 0) => {
         if (nearestSpawn) {
-            onCollect(nearestSpawn.spawn.id, points, nearestSpawn.spawn.category);
-            // We DO NOT call setArMode(false) here so the user stays in AR.
-            // The useEffect above will automatically pick the next nearest spawn
-            // once the current one is added to collectedIds.
+            // CRITICAL FIX: Pasăm tonReward ca al 4-lea argument
+            onCollect(nearestSpawn.spawn.id, points, nearestSpawn.spawn.category, tonReward);
         }
     };
 
     const handleStandardCollect = () => {
          if (nearestSpawn) {
-            onCollect(nearestSpawn.spawn.id, Math.floor(nearestSpawn.spawn.value), nearestSpawn.spawn.category);
+            onCollect(nearestSpawn.spawn.id, Math.floor(nearestSpawn.spawn.value), nearestSpawn.spawn.category, 0);
             setNearestSpawn(null);
         }
     };
 
-    // If arMode is active, we return the ARView. 
-    // This component will stay mounted as long as arMode is true.
     if (arMode) {
         return <ARView target={nearestSpawn} onClose={() => setArMode(false)} onCollect={handleARCollect} />;
     }
