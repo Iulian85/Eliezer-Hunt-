@@ -81,26 +81,25 @@ export const syncUserWithFirebase = async (userData: any, localState: UserState,
 };
 
 /**
- * RECOMPENSĂ INSTANTĂ (onCall) + FALLBACK (addDoc)
+ * RECOMPENSĂ INSTANTĂ (Sistem Securizat)
+ * Am eliminat addDoc-ul care bloca punctele în "pending".
  */
 export const saveCollectionToFirebase = async (tgId: number, spawnId: string, value: number, category?: HotspotCategory, tonReward: number = 0) => {
     if (!tgId) return;
     try {
-        // Încercăm apelul direct pentru viteză instantanee
         const secureClaimFunc = httpsCallable(functions, 'secureClaim');
-        await secureClaimFunc({ userId: tgId, spawnId, category, claimedValue: value, tonReward });
-    } catch (e) {
-        // DACĂ onCall eșuează (timeout sau cold start), scriem documentul 'pending'. 
-        // Trigger-ul de pe server îl va vedea și îl va procesa în câteva secunde.
-        await addDoc(collection(db, "claims"), {
-            userId: Number(tgId),
-            spawnId: String(spawnId),
-            claimedValue: Number(value),
-            tonReward: Number(tonReward),
-            category: category || "URBAN",
-            timestamp: serverTimestamp(),
-            status: "pending"
+        // Trimitem totul la server. Serverul va face update-ul atomic.
+        await secureClaimFunc({ 
+            userId: tgId, 
+            spawnId, 
+            category, 
+            claimedValue: value, 
+            tonReward 
         });
+    } catch (e) {
+        console.error("Cloud Function Claim Failed:", e);
+        // Dacă eșuează funcția, nu mai scriem nimic în Firestore de pe client
+        // pentru a evita documentele "pending" orfane.
     }
 };
 
@@ -116,7 +115,7 @@ export const askGeminiProxy = async (messages: any[]) => {
         const chatFunc = httpsCallable(functions, 'chatWithELZR');
         const res: any = await chatFunc({ messages });
         return res.data;
-    } catch (e) { return { text: "Terminal offline." }; }
+    } catch (e) { return { text: "Proxy offline." }; }
 };
 
 export const getLeaderboard = async () => {
