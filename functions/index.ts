@@ -43,7 +43,7 @@ function verifyTelegramData(initData: string): boolean {
 }
 
 /**
- * SECURE CLAIM HANDLER (V5.3 - HARDENED)
+ * SECURE CLAIM HANDLER (V5.4 - WALKING ONLY)
  */
 export const secureClaim = onCall({
     maxInstances: 10,
@@ -64,13 +64,13 @@ export const secureClaim = onCall({
     const userSnap = await userRef.get();
     const userData = userSnap.data();
 
-    // 2. Anti-Cheat: Viteza de deplasare (Distance/Time)
+    // 2. Anti-Cheat: Viteza de deplasare (Walking Speed Restriction)
     if (userData && userData.lastActiveLocation && userData.lastActiveAt && coords) {
         const lastCoords = userData.lastActiveLocation;
         const lastTime = userData.lastActiveAt.toMillis ? userData.lastActiveAt.toMillis() : userData.lastActiveAt;
         
-        // Calcul distanță simplificat (Haversine)
-        const R = 6371; // km
+        // Calcul distanță (Haversine) - returnează km
+        const R = 6371; 
         const dLat = (coords.lat - lastCoords.lat) * Math.PI / 180;
         const dLon = (coords.lng - lastCoords.lng) * Math.PI / 180;
         const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
@@ -81,20 +81,21 @@ export const secureClaim = onCall({
         const timeDiffHours = (Date.now() - lastTime) / (1000 * 60 * 60);
         const speed = d / (timeDiffHours || 0.0001);
 
-        if (speed > 900 && d > 5) { // Mai rapid decât un avion comercial
-             console.warn(`Suspicious move: User ${userId} speed ${speed}km/h`);
-             throw new HttpsError('permission-denied', 'GPS Anomaly detected. Movement restricted.');
+        // Prag de mers pe jos: 15 km/h (acoperă mers alert și jogging)
+        // Verificăm doar dacă distanța e mai mare de 0.2 km pentru a evita banările cauzate de jitter-ul GPS la precizie mică
+        if (speed > 15 && d > 0.2) { 
+             console.warn(`Suspicious speed: User ${userId} moved at ${speed.toFixed(2)}km/h (Distance: ${d.toFixed(2)}km)`);
+             throw new HttpsError('permission-denied', 'Protocol Error: Walking speed exceeded. Extraction must be done on foot.');
         }
     }
 
-    // 3. Server-Side Reward Definition (NU credem clientul)
-    let finalValue = 100; // Default URBAN
+    // 3. Server-Side Reward Definition
+    let finalValue = 100; 
     let finalTon = 0;
 
     if (category === 'LANDMARK' || category === 'EVENT') finalValue = 1000;
     if (category === 'AD_REWARD') finalValue = 500;
     
-    // Dacă e MERCHANT, verificăm valoarea reală în campanie
     if (category === 'MERCHANT') {
         const campId = spawnId.split('-coin-')[0];
         const campSnap = await db.collection('campaigns').doc(campId).get();
@@ -104,7 +105,7 @@ export const secureClaim = onCall({
         }
     }
 
-    // 4. Salvare în ledger-ul de claims (va declanșa onClaimCreated)
+    // 4. Salvare în ledger
     try {
         const claimRef = db.collection('claims').doc();
         await claimRef.set({
@@ -118,7 +119,7 @@ export const secureClaim = onCall({
             status: "pending"
         });
 
-        // Actualizăm ultima locație pentru următorul check anti-cheat
+        // Actualizăm locația și timpul pentru următorul check de viteză
         await userRef.set({
             lastActiveLocation: coords || null,
             lastActiveAt: FieldValue.serverTimestamp()
@@ -131,7 +132,7 @@ export const secureClaim = onCall({
 });
 
 /**
- * AUTOMATIC LEDGER UPDATE (SECURIZAT)
+ * AUTOMATIC LEDGER UPDATE
  */
 export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event) => {
     const snap = event.data;
@@ -142,7 +143,6 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
     const userRef = db.collection('users').doc(userIdStr);
 
     try {
-        // Prevenim dubla procesare
         if (claim.status === 'verified') return;
 
         const value = Number(claim.claimedValue || 0);
@@ -182,19 +182,17 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
 });
 
 /**
- * AI SYSTEM SCOUT (PROXIED WITH RATE LIMITING)
+ * AI SYSTEM SCOUT
  */
 export const chatWithELZR = onCall(async (request) => {
     const { messages, userId } = request.data || {};
     if (!process.env.API_KEY) throw new HttpsError('failed-precondition', 'AI Offline.');
     
-    // Simulare Rate Limiting (Puteți adăuga un doc în Firebase per user pentru a contura mesajele zilnice)
-    
     try {
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
         const response = await ai.models.generateContent({
             model: 'gemini-3-flash-preview',
-            contents: messages.slice(-5).map((m: any) => ({ // Trimitem doar ultimele 5 mesaje pentru siguranță și cost
+            contents: messages.slice(-5).map((m: any) => ({
                 role: m.role === 'model' ? 'model' : 'user', 
                 parts: [{ text: m.text }] 
             })),
