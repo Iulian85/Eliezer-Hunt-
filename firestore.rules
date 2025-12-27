@@ -3,33 +3,51 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
+    match /used_nonces/{nonceId} {
+      allow read: if false;
+      allow write: if false;
+    }
+
     match /users/{userId} {
       allow read: if true; 
       allow create: if true;
-      // Clientul NU are voie să modifice balanțele (numerele de puncte)
-      allow update: if request.resource.data.diff(resource.data).affectedKeys()
-        .hasOnly(['photoUrl', 'username', 'lastActive', 'deviceFingerprint', 'walletAddress', 'biometricEnabled']);
+      allow update: if true; 
+      allow delete: if true; 
+
+      match /security_logs/{logId} {
+        allow read, write: if false;
+      }
     }
     
     match /claims/{claimId} {
-      // Colecția de log-uri este doar pentru citit (opțional) sau creată de server (Admin SDK)
-      allow read: if false;
-      allow create: if false; // Forțăm utilizarea Cloud Functions pentru securitate
+      allow create: if true;
+      allow read, update, delete: if true;
+    }
+
+    match /ad_claims/{claimId} {
+      allow create: if true;
+      allow read, update, delete: if true;
+    }
+
+    match /referral_claims/{claimId} {
+      allow create: if true;
+      allow read, update, delete: if true;
     }
 
     match /withdrawal_requests/{reqId} {
       allow create: if true;
-      allow read: if false;
+      allow read, update, delete: if true;
     }
     
     match /campaigns/{campId} {
       allow read: if true;
-      allow write: if false; 
+      allow write: if true;
+      allow delete: if true;
     }
 
     match /hotspots/{hId} {
-      allow read: if true;
-      allow write: if false;
+      allow get, list: if true;
+      allow write, delete: if true;
     }
   }
 }

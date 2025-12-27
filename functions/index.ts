@@ -1,5 +1,5 @@
-
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { GoogleGenAI } from '@google/genai';
@@ -11,131 +11,155 @@ if (getApps().length === 0) {
 const db = getFirestore();
 
 /**
- * FUNCȚIA SUPREMĂ DE ALOCARE (Execuție atomică)
+ * SECURE CLAIM HANDLER
+ * Processes extractions server-side to prevent client-side balance tampering.
  */
-export const secureClaim = onCall({ cors: true }, async (request) => {
-    const { userId, spawnId, category, claimedValue, tonReward } = request.data || {};
+export const secureClaim = onCall({
+    maxInstances: 10,
+    memory: "256MiB"
+}, async (request) => {
+    const { userId, spawnId, claimedValue, tonReward, category } = request.data || {};
     
-    if (!userId) {
-        throw new HttpsError('invalid-argument', 'User ID invalid.');
+    if (!userId || !spawnId) {
+        throw new HttpsError('invalid-argument', 'Protocol error: Extraction data missing.');
     }
 
-    const val = Number(claimedValue || 0);
-    const ton = Number(tonReward || 0);
-    const cat = String(category || 'URBAN');
-    const uId = String(userId);
-
     try {
-        const batch = db.batch();
-        const userRef = db.collection('users').doc(uId);
+        const claimRef = db.collection('claims').doc();
         
-        // Obținem datele actuale pentru siguranță (opțional, dar bun pentru log-uri)
-        const userSnap = await userRef.get();
-        if (!userSnap.exists) {
-            // Dacă userul nu există, îl creăm acum cu balanța de start
-            batch.set(userRef, {
-                telegramId: Number(userId),
-                balance: val,
-                tonBalance: ton,
-                gameplayBalance: cat === 'URBAN' || cat === 'MALL' ? val : 0,
-                rareBalance: cat === 'LANDMARK' ? val : 0,
-                eventBalance: cat === 'EVENT' ? val : 0,
-                dailySupplyBalance: cat === 'AD_REWARD' ? val : 0,
-                merchantBalance: cat === 'MERCHANT' ? val : 0,
-                collectedIds: spawnId && !spawnId.startsWith('ad-') ? [spawnId] : [],
-                lastActive: FieldValue.serverTimestamp()
-            });
-        } else {
-            // Update balanțe existente
-            const updateData: any = {
-                balance: FieldValue.increment(val),
-                tonBalance: FieldValue.increment(ton),
-                lastActive: FieldValue.serverTimestamp()
-            };
-
-            if (spawnId && !spawnId.startsWith('ad-')) {
-                updateData.collectedIds = FieldValue.arrayUnion(spawnId);
-            }
-
-            // Repartizare pe sub-balanțe pentru Wallet (Airdrop Estimation)
-            if (cat === 'AD_REWARD') {
-                updateData.dailySupplyBalance = FieldValue.increment(val);
-                updateData.lastDailyClaim = Date.now();
-            } else if (cat === 'LANDMARK') {
-                updateData.rareBalance = FieldValue.increment(val);
-            } else if (cat === 'EVENT') {
-                updateData.eventBalance = FieldValue.increment(val);
-            } else if (cat === 'MERCHANT') {
-                updateData.merchantBalance = FieldValue.increment(val);
-            } else {
-                updateData.gameplayBalance = FieldValue.increment(val);
-            }
-
-            batch.update(userRef, updateData);
-        }
-
-        // Scriem log-ul în claims DIRECT cu status 'verified' (Nu mai lăsăm nimic în pending)
-        const logRef = db.collection('claims').doc();
-        batch.set(logRef, {
+        await claimRef.set({
             userId: Number(userId),
-            spawnId: String(spawnId || 'system'),
-            category: cat,
-            claimedValue: val,
-            tonReward: ton,
-            status: 'verified',
-            timestamp: FieldValue.serverTimestamp()
+            spawnId: String(spawnId),
+            claimedValue: Number(claimedValue || 0),
+            tonReward: Number(tonReward || 0),
+            category: category || "URBAN",
+            timestamp: FieldValue.serverTimestamp(),
+            status: "pending",
+            source: "secure_uplink"
         });
 
-        await batch.commit();
-        console.log(`Successfully allocated ${val} points to ${uId}`);
-        return { success: true, newBalance: (userSnap.data()?.balance || 0) + val };
-
+        return { success: true, claimId: claimRef.id };
     } catch (e: any) {
-        console.error("Critical Claim Error:", e);
-        throw new HttpsError('internal', 'Server error during allocation.');
+        console.error("Secure Claim Error:", e);
+        throw new HttpsError('internal', 'Extraction failed: System Core timeout.');
     }
 });
 
 /**
- * REFERRAL SYSTEM
+ * AUTOMATIC LEDGER UPDATE
+ * Reacts to new claims and updates the user's global balance safely.
  */
-export const secureReferral = onCall(async (request) => {
-    const { referrerId, userId, userName } = request.data || {};
-    if (!referrerId || !userId) return { success: false };
+export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event) => {
+    const snap = event.data;
+    if (!snap) return;
+    const claim = snap.data();
+    const claimId = event.params.claimId;
+    
+    const rawUserId = claim.userId;
+    if (!rawUserId) return;
+    
+    const userIdStr = String(rawUserId);
+    const userRef = db.collection('users').doc(userIdStr);
 
     try {
-        const batch = db.batch();
-        const refOwnerRef = db.collection('users').doc(String(referrerId));
-        const newUserRef = db.collection('users').doc(String(userId));
+        const value = Number(claim.claimedValue || 0);
+        const tonValue = Number(claim.tonReward || 0);
+        const category = claim.category || 'URBAN';
+        const spawnId = claim.spawnId;
 
-        batch.set(refOwnerRef, {
-            balance: FieldValue.increment(50),
-            referralBalance: FieldValue.increment(50),
-            referrals: FieldValue.increment(1),
-            referralNames: FieldValue.arrayUnion(userName || "Hunter")
-        }, { merge: true });
+        const userUpdate: any = {
+            telegramId: Number(rawUserId),
+            balance: FieldValue.increment(value),
+            tonBalance: FieldValue.increment(tonValue),
+            lastActive: FieldValue.serverTimestamp()
+        };
 
-        batch.set(newUserRef, {
-            balance: FieldValue.increment(25),
-            gameplayBalance: FieldValue.increment(25),
-            hasClaimedReferral: true
-        }, { merge: true });
+        // Don't track ad-based IDs to allow re-watching, but track real-world spawns
+        if (spawnId && !spawnId.startsWith('ad-')) {
+            userUpdate.collectedIds = FieldValue.arrayUnion(spawnId);
+        }
 
-        await batch.commit();
-        return { success: true };
-    } catch (e) {
-        return { success: false };
+        // Tiered balance tracking
+        if (category === 'AD_REWARD') {
+            userUpdate.dailySupplyBalance = FieldValue.increment(value);
+            userUpdate.adsWatched = FieldValue.increment(1);
+            userUpdate.lastDailyClaim = Date.now();
+        } else if (category === 'MERCHANT') {
+            userUpdate.merchantBalance = FieldValue.increment(value);
+            userUpdate.sponsoredAdsWatched = FieldValue.increment(1);
+        } else if (category === 'LANDMARK') {
+            userUpdate.rareBalance = FieldValue.increment(value);
+            userUpdate.rareItemsCollected = FieldValue.increment(1);
+        } else if (category === 'EVENT') {
+            userUpdate.eventBalance = FieldValue.increment(value);
+            userUpdate.eventItemsCollected = FieldValue.increment(1);
+        } else {
+            userUpdate.gameplayBalance = FieldValue.increment(value);
+        }
+
+        await userRef.set(userUpdate, { merge: true });
+        await snap.ref.update({ 
+            status: 'verified', 
+            processedAt: FieldValue.serverTimestamp()
+        });
+
+    } catch (err: any) {
+        console.error(`[CRITICAL] Ledger update failed for ${claimId}:`, err);
+        await snap.ref.update({ status: 'error', errorMsg: err.message });
     }
 });
 
+/**
+ * AI SYSTEM SCOUT
+ * Proxy for Gemini AI interaction.
+ */
 export const chatWithELZR = onCall(async (request) => {
     const { messages } = request.data || {};
-    if (!process.env.API_KEY) return { text: "Terminal offline." };
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: messages.slice(-5).map((m: any) => ({ role: m.role, parts: [{ text: m.text }] })),
-        config: { systemInstruction: "Be a brief crypto scout.", thinkingConfig: { thinkingBudget: 0 } }
-    });
-    return { text: response.text };
+    if (!process.env.API_KEY) throw new HttpsError('failed-precondition', 'AI Core offline: API Key missing.');
+    
+    try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const response = await ai.models.generateContent({
+            model: 'gemini-3-flash-preview',
+            contents: messages.map((m: any) => ({ 
+                role: m.role === 'model' ? 'model' : 'user', 
+                parts: [{ text: m.text }] 
+            })),
+            config: { 
+                systemInstruction: "You are ELZR System Scout. You assist Hunters in a location-based crypto game. Be tactical, futuristic, and brief. Use terms like 'Uplink', 'Node', 'Extraction', 'Sector'.",
+                temperature: 0.8 
+            }
+        });
+        
+        return { text: response.text };
+    } catch (e: any) {
+        console.error("Gemini AI Node Error:", e);
+        throw new HttpsError('internal', 'AI Core sync error: Tactical data packet lost.');
+    }
+});
+
+/**
+ * ADMIN PROTOCOLS
+ */
+export const resetUserProtocol = onCall(async (request) => {
+    const targetUserId = request.data?.targetUserId;
+    if (!targetUserId) throw new HttpsError('invalid-argument', 'Target node ID missing.');
+    
+    try {
+        await db.collection('users').doc(String(targetUserId)).update({
+            balance: 0,
+            tonBalance: 0,
+            gameplayBalance: 0,
+            rareBalance: 0,
+            eventBalance: 0,
+            dailySupplyBalance: 0,
+            merchantBalance: 0,
+            referralBalance: 0,
+            collectedIds: [],
+            lastActive: FieldValue.serverTimestamp()
+        });
+        return { success: true };
+    } catch (e: any) {
+        throw new HttpsError('internal', e.message);
+    }
 });
