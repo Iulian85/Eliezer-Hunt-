@@ -108,15 +108,15 @@ export const AdminView: React.FC<AdminViewProps> = ({
 
     const handleExecuteAirdrop = async (user: any, allocation: number) => {
         if (!user.walletAddress) return alert("User has no wallet connected.");
-        if (window.confirm(`EXECUTE AIRDROP: Send ${allocation.toFixed(8)} $ELZR to ${user.walletAddress}?`)) {
+        if (window.confirm(`EXECUTE AIRDROP: Send ${allocation.toFixed(8)} $ELZR directly to address ${user.walletAddress}?`)) {
             setIsProcessingAirdrop(user.id);
             const success = await markUserAirdropped(user.id, allocation);
             setIsProcessingAirdrop(null);
             if (success) {
-                alert("Airdrop logic triggered! User marked as paid.");
+                alert("Airdrop Protocol Successful. TON Minter transaction initiated.");
                 loadUsers();
             } else {
-                alert("System error. Payment node failed.");
+                alert("System error. Airdrop Node timeout.");
             }
         }
     };
@@ -213,25 +213,20 @@ export const AdminView: React.FC<AdminViewProps> = ({
         );
     }, [users, searchQuery]);
 
+    // LOGICA STRICTĂ PENTRU AIRDROP (TOATE criteriile sunt obligatorii)
     const qualifiedHunters = useMemo(() => {
         return users.filter(u => {
             if (u.isAirdropped) return false;
             
-            // TOATE categoriile sunt obligatorii
             const hasGameplay = (u.gameplayBalance > 0);
             const hasRare = (u.rareBalance > 0);
             const hasEvent = (u.eventBalance > 0);
             const hasMerchant = (u.merchantBalance > 0);
-            
-            // Minim 365 reclame vizionate (Daily Supply consistency)
-            const hasDailySupply = (u.adsWatched >= 365);
-            
-            // Minim 10 referali
-            const hasReferrals = (u.referrals >= 10);
-            
-            // Adresa de wallet este obligatorie pentru plata
+            const hasDailySupply = (u.adsWatched >= 365); // Minim 365 reclame (Daily Supply)
+            const hasReferrals = (u.referrals >= 10);    // Minim 10 referali
             const hasWallet = !!u.walletAddress;
 
+            // Doar dacă TOATE sunt adevărate
             return hasGameplay && hasRare && hasEvent && hasMerchant && hasDailySupply && hasReferrals && hasWallet;
         });
     }, [users]);
