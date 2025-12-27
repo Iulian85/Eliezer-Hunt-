@@ -9,6 +9,7 @@ import { showRewardedAd } from '../services/adsgram';
 import { UniversalVideoPlayer } from '../components/UniversalVideoPlayer';
 import { ADSGRAM_BLOCK_ID } from '../constants';
 
+// Cast components to any to avoid intrinsic element type errors
 const AmbientLight = 'ambientLight' as any;
 const DirectionalLight = 'directionalLight' as any;
 const Group = 'group' as any;
@@ -59,8 +60,10 @@ export const ARView: React.FC<ARViewProps> = ({ target, onClose, onCollect }) =>
     const [wonTon, setWonTon] = useState<number | null>(null);
     const [wonPoints, setWonPoints] = useState<number | null>(null);
 
+    const targetId = target?.spawn.id;
+
     useEffect(() => {
-        if (target?.spawn.id) {
+        if (targetId) {
             setCollecting(false);
             setHasEscaped(false);
             setGbRevealed(false);
@@ -70,25 +73,32 @@ export const ARView: React.FC<ARViewProps> = ({ target, onClose, onCollect }) =>
             setCoinPos(new THREE.Vector3((Math.random() - 0.5) * 5, 1.2, -7));
             setTimeout(() => setIsRespawning(false), 800);
         }
-    }, [target?.spawn.id]);
+    }, [targetId]);
 
+    // Initialize Camera correctly for Telegram
     useEffect(() => {
         let mounted = true;
         let stream: MediaStream | null = null;
+
         const startCamera = async () => {
             try {
+                // Ensure we request permissions as part of the initial mount
                 stream = await navigator.mediaDevices.getUserMedia({ 
                     video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }, 
                     audio: false 
                 });
+                
                 if (mounted && videoRef.current) {
                     videoRef.current.srcObject = stream;
                     videoRef.current.setAttribute('playsinline', 'true');
                     videoRef.current.muted = true;
+                    
                     videoRef.current.onloadedmetadata = () => {
                         if (videoRef.current) {
                             videoRef.current.play()
-                                .then(() => { if (mounted) setCameraActive(true); })
+                                .then(() => {
+                                    if (mounted) setCameraActive(true);
+                                })
                                 .catch(e => console.warn("Camera auto-play blocked", e));
                         }
                     };
@@ -98,15 +108,20 @@ export const ARView: React.FC<ARViewProps> = ({ target, onClose, onCollect }) =>
                 if (mounted) setPermissionError(true); 
             }
         };
+
         startCamera();
         return () => {
             mounted = false;
-            if (stream) stream.getTracks().forEach(t => t.stop());
+            if (stream) {
+                stream.getTracks().forEach(t => t.stop());
+            }
         };
     }, []);
 
     const forceCameraPlay = () => {
-        if (videoRef.current) videoRef.current.play().then(() => setCameraActive(true)).catch(console.error);
+        if (videoRef.current) {
+            videoRef.current.play().then(() => setCameraActive(true)).catch(console.error);
+        }
     };
 
     const playSound = (type: 'success' | 'error' | 'prize') => {
@@ -130,6 +145,14 @@ export const ARView: React.FC<ARViewProps> = ({ target, onClose, onCollect }) =>
         } catch (e) {}
     };
 
+    const triggerCollectionSuccess = (points: number, tonAmount: number) => {
+        setCollecting(true);
+        setGbRevealed(false); 
+        playSound('success');
+        if (window.Telegram?.WebApp?.HapticFeedback) window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
+        onCollect(points, tonAmount);
+    };
+
     const handleCoinTap = async () => {
         if (!cameraActive) forceCameraPlay();
         if (!target || collecting || loadingAd || playingSponsorAd || hasEscaped || isRespawning) return;
@@ -137,6 +160,7 @@ export const ARView: React.FC<ARViewProps> = ({ target, onClose, onCollect }) =>
         
         const cat = target.spawn.category;
         
+        // Collect instantly for standard spots
         if (cat === 'URBAN' || cat === 'MALL') {
              triggerCollectionSuccess(Math.floor(target.spawn.value), 0);
              return;
@@ -152,11 +176,8 @@ export const ARView: React.FC<ARViewProps> = ({ target, onClose, onCollect }) =>
                 const success = await showRewardedAd(ADSGRAM_BLOCK_ID);
                 setLoadingAd(false);
                 if (success) {
-                    if (isGB) {
-                        finishGiftBox();
-                    } else {
-                        triggerCollectionSuccess(Math.floor(target.spawn.value), 0);
-                    }
+                    if (isGB) finishGiftBox();
+                    else triggerCollectionSuccess(Math.floor(target.spawn.value), 0);
                 } else {
                     playSound('error');
                 }
@@ -177,36 +198,18 @@ export const ARView: React.FC<ARViewProps> = ({ target, onClose, onCollect }) =>
 
     const finishGiftBox = () => {
         const isTonWin = Math.random() < 0.15 && (target?.spawn.prizes?.length || 0) > 0; 
-        let finalPoints = 0; 
-        let finalTon = 0;
+        let finalPoints = 0; let finalTon = 0;
 
         if (isTonWin) {
             finalTon = target!.spawn.prizes![Math.floor(Math.random() * target!.spawn.prizes!.length)];
-            setWonTon(finalTon); 
-            setWonPoints(null);
+            setWonTon(finalTon); setWonPoints(null);
         } else {
             finalPoints = [100, 250, 500, 1000][Math.floor(Math.random() * 4)];
-            setWonPoints(finalPoints); 
-            setWonTon(null);
+            setWonPoints(finalPoints); setWonTon(null);
         }
 
-        setGbRevealed(true); 
-        playSound('prize');
-        
-        // Așteptăm ca animația Mystery Box să se termine înainte de a trimite punctele către Wallet
-        setTimeout(() => {
-            triggerCollectionSuccess(finalPoints, finalTon);
-        }, 4500);
-    };
-
-    const triggerCollectionSuccess = (points: number, tonAmount: number) => {
-        setCollecting(true);
-        setGbRevealed(false); 
-        playSound('success');
-        if (window.Telegram?.WebApp?.HapticFeedback) window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
-        
-        // Trimitem datele către funcția onCollect (care ajunge în HuntView -> handleARCollect)
-        onCollect(points, tonAmount);
+        setGbRevealed(true); playSound('prize');
+        setTimeout(() => triggerCollectionSuccess(finalPoints, finalTon), 4500);
     };
 
     const handleEscape = () => { 
@@ -227,6 +230,7 @@ export const ARView: React.FC<ARViewProps> = ({ target, onClose, onCollect }) =>
 
     return (
         <div className="fixed inset-0 z-[10010] bg-black overflow-hidden flex flex-col font-sans" onClick={forceCameraPlay}>
+            {/* 1. Video Layer */}
             <div className="absolute inset-0 z-0">
                 {!permissionError ? (
                     <video ref={videoRef} className="w-full h-full object-cover" autoPlay playsInline muted />
@@ -244,6 +248,7 @@ export const ARView: React.FC<ARViewProps> = ({ target, onClose, onCollect }) =>
                 )}
             </div>
 
+            {/* 2. 3D AR Layer - Transparent */}
             <div className={`absolute inset-0 z-10 pointer-events-none transition-opacity duration-700 ${cameraActive ? 'opacity-100' : 'opacity-0'}`}>
                 <Canvas gl={{ alpha: true, antialias: true }} onCreated={({ gl }) => gl.setClearColor(0x000000, 0)} style={{ pointerEvents: 'auto' }}>
                     <Suspense fallback={null}>
@@ -288,6 +293,7 @@ export const ARView: React.FC<ARViewProps> = ({ target, onClose, onCollect }) =>
                 </Canvas>
             </div>
 
+            {/* 3. UI Layer */}
             <div className="absolute inset-0 z-20 pointer-events-none flex flex-col justify-between p-6">
                 <div className="flex justify-between items-start pointer-events-auto">
                     <div className="bg-black/40 backdrop-blur-xl px-4 py-2 rounded-xl border border-white/10">
@@ -306,7 +312,7 @@ export const ARView: React.FC<ARViewProps> = ({ target, onClose, onCollect }) =>
                             <div className="text-center">
                                 <h2 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Mystery Found</h2>
                                 <span className="text-4xl font-black text-white flex items-center gap-2">
-                                    {wonTon !== null ? wonTon : wonPoints} {wonTon !== null ? <Wallet size={24}/> : <Coins size={24}/>}
+                                    {wonTon || wonPoints} {wonTon ? <Wallet size={24}/> : <Coins size={24}/>}
                                 </span>
                             </div>
                         </div>
