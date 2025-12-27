@@ -57,20 +57,29 @@ export const resetUserProtocol = onCall(async (request) => {
     if (!targetUserId) throw new HttpsError('invalid-argument', 'Missing targetUserId');
 
     const idStr = targetUserId.toString();
+    const idNum = parseInt(idStr);
 
     try {
         const batch = db.batch();
+        
+        // 1. Ștergem documentul principal de utilizator
         batch.delete(db.collection('users').doc(idStr));
 
-        const purgeCollection = async (name: string, field: string) => {
-            const snap = await db.collection(name).where(field, 'in', [idStr, parseInt(idStr)]).get();
-            snap.docs.forEach(d => batch.delete(d.ref));
+        // Funcție internă pentru a curăța colecțiile de tranzacții (userId poate fi string sau number)
+        const purge = async (coll: string, field: string) => {
+            const s1 = await db.collection(coll).where(field, '==', idStr).get();
+            s1.docs.forEach(d => batch.delete(d.ref));
+            if (!isNaN(idNum)) {
+                const s2 = await db.collection(coll).where(field, '==', idNum).get();
+                s2.docs.forEach(d => batch.delete(d.ref));
+            }
         };
 
-        await purgeCollection('claims', 'userId');
-        await purgeCollection('ad_claims', 'userId');
-        await purgeCollection('referral_claims', 'referredId');
-        await purgeCollection('referral_claims', 'referrerId');
+        await purge('claims', 'userId');
+        await purge('ad_claims', 'userId');
+        await purge('referral_claims', 'referredId');
+        await purge('referral_claims', 'referrerId');
+        await purge('withdrawal_requests', 'userId');
 
         await batch.commit();
         return { success: true };
