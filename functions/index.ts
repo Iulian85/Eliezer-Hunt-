@@ -22,7 +22,7 @@ export const onReferralClaimCreated = onDocumentCreated('referral_claims/{claimI
     if (!snap) return;
     const claim = snap.data();
     
-    // Convertim ID-urile în string-uri, deoarece cheile documentelor 'users' sunt string-uri în Firestore
+    // IMPORTANT: Asigurăm conversia ID-urilor în String pentru doc references
     const referrerId = claim.referrerId.toString();
     const referredId = claim.referredId.toString();
     const referredName = claim.referredName || "New Hunter";
@@ -50,12 +50,23 @@ export const onReferralClaimCreated = onDocumentCreated('referral_claims/{claimI
         }, { merge: true });
 
         await batch.commit();
-        await snap.ref.update({ status: 'processed', processedAt: FieldValue.serverTimestamp() });
-        console.log(`Referral processed successfully: ${referrerId} invited ${referredId}`);
+        
+        // Marcăm claim-ul ca procesat cu succes
+        await snap.ref.update({ 
+            status: 'processed', 
+            processedAt: FieldValue.serverTimestamp(),
+            appliedTo: [referrerId, referredId]
+        });
+
+        console.log(`[Frens Engine] Referral Success: ${referrerId} recruited ${referredId} (${referredName})`);
 
     } catch (err) {
-        console.error("Referral Processing Failed:", err);
-        await snap.ref.update({ status: 'error', error: String(err) });
+        console.error("[Frens Engine] Fatal Error:", err);
+        await snap.ref.update({ 
+            status: 'error', 
+            error: String(err),
+            failedAt: FieldValue.serverTimestamp()
+        });
     }
 });
 

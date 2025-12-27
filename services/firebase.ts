@@ -120,7 +120,6 @@ export const syncUserWithFirebase = async (
     if (!userData.id) return localState;
     const userDocRef = doc(db, "users", userData.id.toString());
     
-    // Construim numele complet pentru a fi afișat în TOP și Network
     const fullName = [userData.firstName, userData.lastName].filter(Boolean).join(' ');
     const displayName = fullName || userData.username || `Hunter_${userData.id.toString().slice(-4)}`;
 
@@ -128,7 +127,6 @@ export const syncUserWithFirebase = async (
         const userDoc = await getDoc(userDocRef);
         if (userDoc.exists()) {
             const existingData = userDoc.data();
-            // Actualizăm mereu numele dacă s-a schimbat în Telegram
             if (existingData.username !== displayName || existingData.cloudStorageId !== cloudId) {
                 await updateDoc(userDocRef, { 
                     username: displayName,
@@ -222,7 +220,7 @@ export const saveCollectionToFirebase = async (tgId: number, spawnId: string, va
                 break;
             case 'AD_REWARD': 
                 updates.dailySupplyBalance = increment(value); 
-                updates.adsWatched = increment(1);
+                updates.adsWatched = increment(1); 
                 updates.lastDailyClaim = Date.now();
                 break;
         }
@@ -235,23 +233,27 @@ export const saveCollectionToFirebase = async (tgId: number, spawnId: string, va
 };
 
 export const processReferralReward = async (referrerId: string, newUserId: number, newUserName: string) => {
+    if (!referrerId || !newUserId) return;
+    
     try {
+        // 1. Creăm cererea de referal în colecția dedicată
         const claimRef = doc(collection(db, "referral_claims"));
         await setDoc(claimRef, {
             referrerId: referrerId.toString(),
-            referredId: Number(newUserId),
+            referredId: newUserId.toString(),
             referredName: newUserName,
             timestamp: serverTimestamp(),
             status: "pending"
         });
         
-        await setDoc(doc(db, "users", newUserId.toString()), {
+        // 2. Marcăm local utilizatorul că a folosit deja un cod (pentru a preveni buclele)
+        await updateDoc(doc(db, "users", newUserId.toString()), {
             hasClaimedReferral: true
-        }, { merge: true });
+        });
 
-        console.log(`Referral link created: ${referrerId} -> ${newUserId} (${newUserName})`);
+        console.log(`[Referral System] Node Linked: ${referrerId} -> ${newUserId}`);
     } catch (e) {
-        console.error("Referral process error", e);
+        console.error("[Referral System] Critical Error:", e);
     }
 };
 

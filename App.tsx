@@ -151,11 +151,12 @@ function App() {
 
                 // LOGICA REFERAL: Verificăm imediat după sincronizare
                 const startParam = tg.initDataUnsafe.start_param || "";
-                if (startParam.startsWith('ref_') && !synced.hasClaimedReferral) {
+                if (startParam && startParam.startsWith('ref_') && !synced.hasClaimedReferral) {
                     const referrerId = startParam.replace('ref_', '');
                     if (referrerId !== userIdNum.toString()) {
                         const fullName = [tgUser.first_name, tgUser.last_name].filter(Boolean).join(' ');
                         const finalName = fullName || tgUser.username || `Hunter_${userIdNum}`;
+                        // Declanșăm procesul de reward
                         await processReferralReward(referrerId, userIdNum, finalName);
                     }
                 }
