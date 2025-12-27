@@ -42,25 +42,26 @@ export async function getCurrentFingerprint() {
         const fp = await FingerprintJS.load();
         const result = await fp.get();
         return result.visitorId;
-    } catch (e) { return "unknown_fp"; }
+    } catch (e) {
+        return "unknown_fp";
+    }
 }
 
 export const getCloudStorageId = (): Promise<string> => {
     return new Promise((resolve) => {
         const tg = window.Telegram?.WebApp;
-        if (!tg?.CloudStorage) { resolve("no_cloud_storage"); return; }
+        if (!tg?.CloudStorage) {
+            resolve("no_cloud_storage");
+            return;
+        }
         tg.CloudStorage.getItem('elzr_uuid', (err, value) => {
-            if (value) resolve(value);
-            else { const newUuid = crypto.randomUUID(); tg.CloudStorage.setItem('elzr_uuid', newUuid, () => resolve(newUuid)); }
+            if (value) {
+                resolve(value);
+            } else {
+                const newUuid = crypto.randomUUID();
+                tg.CloudStorage.setItem('elzr_uuid', newUuid, () => resolve(newUuid));
+            }
         });
-    });
-};
-
-export const clearCloudStorageId = (): Promise<void> => {
-    return new Promise((resolve) => {
-        const tg = window.Telegram?.WebApp;
-        if (!tg?.CloudStorage) { resolve(); return; }
-        tg.CloudStorage.setItem('elzr_uuid', '', () => resolve());
     });
 };
 
@@ -68,7 +69,12 @@ export const askGeminiProxy = async (messages: any[]) => {
     const fingerprint = await getCurrentFingerprint();
     const cloudId = await getCloudStorageId();
     const chatFunc = httpsCallable(functions, 'chatWithELZR');
-    const result = await chatFunc({ messages, initData: window.Telegram.WebApp.initData, fingerprint, cloudId });
+    const result = await chatFunc({ 
+        messages, 
+        initData: window.Telegram.WebApp.initData,
+        fingerprint: fingerprint,
+        cloudId: cloudId
+    });
     return result.data as { text: string };
 };
 
@@ -84,76 +90,71 @@ const sanitizeUserData = (data: any, defaults: UserState): UserState => {
         dailySupplyBalance: Number(data.dailySupplyBalance || 0),
         merchantBalance: Number(data.merchantBalance || 0),
         referralBalance: Number(data.referralBalance || 0),
-        adsWatched: Number(data.adsWatched || 0),
-        referrals: Number(data.referrals || 0),
-        lastDailyClaim: Number(data.lastDailyClaim || 0),
-        referralNames: data.referralNames || [],
-        hasClaimedReferral: !!data.hasClaimedReferral,
         collectedIds: data.collectedIds || []
     };
 };
 
 export const subscribeToUserProfile = (tgId: number, defaults: UserState, callback: (userData: UserState) => void) => {
     if (!tgId) return () => {};
-    const docRef = doc(db, "users", tgId.toString());
-    return onSnapshot(docRef, (docSnap) => {
+    const docId = tgId.toString();
+    return onSnapshot(doc(db, "users", docId), (docSnap) => {
         if (docSnap.exists()) {
-            callback(sanitizeUserData(docSnap.data(), defaults));
-        } else {
-            // Dacă userul lipsește din DB, trimitem default-urile (0-uri) în UI
-            callback(defaults);
+            const data = sanitizeUserData(docSnap.data(), defaults);
+            callback(data);
         }
-    }, (error) => {
-        console.error("Profile Subscription Error:", error);
+    }, (err) => {
+        console.error("Firestore Subscription Error:", err);
     });
 };
 
-export const syncUserWithFirebase = async (userData: any, localState: UserState, fingerprint: string, cloudId: string, initDataRaw?: string): Promise<UserState> => {
+export const syncUserWithFirebase = async (
+    userData: { id: number, username?: string, firstName?: string, lastName?: string, photoUrl?: string }, 
+    localState: UserState, 
+    fingerprint: string,
+    cloudId: string,
+    initDataRaw?: string,
+    currentLocation?: Coordinate
+): Promise<UserState> => {
     if (!userData.id) return localState;
     const userDocRef = doc(db, "users", userData.id.toString());
-    const fullName = [userData.firstName, userData.lastName].filter(Boolean).join(' ');
-    const displayName = fullName || userData.username || `Hunter_${userData.id.toString().slice(-4)}`;
     
     try {
         const userDoc = await getDoc(userDocRef);
         if (userDoc.exists()) {
-            const data = userDoc.data();
-            await updateDoc(userDocRef, { 
-                username: displayName, 
-                cloudStorageId: cloudId, 
-                deviceFingerprint: fingerprint, 
-                lastActive: serverTimestamp(),
-                photoUrl: userData.photoUrl || ''
-            });
-            return sanitizeUserData(data, localState);
+            const existingData = userDoc.data();
+            if (existingData.cloudStorageId !== cloudId || existingData.deviceFingerprint !== fingerprint) {
+                await updateDoc(userDocRef, { 
+                    cloudStorageId: cloudId, 
+                    deviceFingerprint: fingerprint,
+                    lastActive: serverTimestamp()
+                });
+            }
+            return sanitizeUserData({ ...existingData, cloudStorageId: cloudId }, localState);
         } else {
-            // DACĂ LIPSEȘTE (după delete manual), ÎL CREĂM CU TOATE VALORILE LA ZERO
-            const newUser: any = { 
-                telegramId: userData.id, 
-                username: displayName, 
-                photoUrl: userData.photoUrl || '', 
-                deviceFingerprint: fingerprint, 
-                cloudStorageId: cloudId, 
-                balance: 0, 
-                tonBalance: 0, 
-                gameplayBalance: 0, 
-                rareBalance: 0, 
-                eventBalance: 0, 
-                dailySupplyBalance: 0, 
-                merchantBalance: 0, 
-                referralBalance: 0, 
-                adsWatched: 0,
-                referrals: 0,
-                lastDailyClaim: 0,
-                collectedIds: [], 
-                joinedAt: serverTimestamp(), 
-                lastActive: serverTimestamp(), 
-                biometricEnabled: true, 
-                referralNames: [], 
-                hasClaimedReferral: false 
+            const newUserProfile: any = {
+                telegramId: userData.id,
+                username: userData.username || `Hunter_${userData.id.toString().slice(-4)}`,
+                photoUrl: userData.photoUrl || '',
+                deviceFingerprint: fingerprint,
+                cloudStorageId: cloudId,
+                lastInitData: initDataRaw,
+                lastLocation: currentLocation || null,
+                isBanned: false,
+                balance: 0,
+                tonBalance: 0,
+                gameplayBalance: 0,
+                rareBalance: 0,
+                eventBalance: 0,
+                dailySupplyBalance: 0,
+                merchantBalance: 0,
+                referralBalance: 0,
+                collectedIds: [],
+                joinedAt: serverTimestamp(),
+                lastActive: serverTimestamp(),
+                biometricEnabled: true
             };
-            await setDoc(userDocRef, newUser);
-            return newUser;
+            await setDoc(userDocRef, newUserProfile);
+            return newUserProfile;
         }
     } catch (e) { 
         console.error("Sync Error:", e);
@@ -161,46 +162,93 @@ export const syncUserWithFirebase = async (userData: any, localState: UserState,
     }
 };
 
-export const saveCollectionToFirebase = async (tgId: number, spawnId: string, value: number, category?: HotspotCategory, tonReward: number = 0) => {
+export const saveCollectionToFirebase = async (tgId: number, spawnId: string, value: number, category?: HotspotCategory, tonReward: number = 0, captureLocation?: Coordinate) => {
     if (!tgId) return;
+    const fingerprint = await getCurrentFingerprint();
+    const cloudId = await getCloudStorageId();
+    const userRef = doc(db, "users", tgId.toString());
+
     try {
-        // userId trebuie să fie întotdeauna număr pentru trigger
-        await addDoc(collection(db, "claims"), { 
-            userId: Number(tgId), 
-            spawnId: spawnId.toString(), 
-            claimedValue: Number(value), 
-            tonReward: Number(tonReward), 
+        // Înregistrăm colectarea pentru procesare backend
+        await addDoc(collection(db, "claims"), {
+            userId: Number(tgId),
+            spawnId,
+            claimedValue: Number(value),
+            tonReward: Number(tonReward),
             category: category || "URBAN", 
-            timestamp: serverTimestamp(), 
-            status: "pending" 
+            timestamp: serverTimestamp(),
+            status: "pending", 
+            fingerprint: fingerprint,
+            cloudId: cloudId
         });
-    } catch (e) { console.error("Save Error:", e); }
+
+        // Actualizăm profilul utilizatorului
+        const updates: any = {
+            lastActive: serverTimestamp()
+        };
+
+        // Adăugăm ID-ul în colecția de colectate pentru a preveni reapariția
+        if (spawnId && !spawnId.startsWith('ad-')) {
+            updates.collectedIds = arrayUnion(spawnId);
+        }
+
+        // Incrementăm local balanțele pentru feedback instant
+        updates.balance = increment(value);
+        updates.tonBalance = increment(tonReward);
+
+        switch (category) {
+            case 'URBAN': case 'MALL': updates.gameplayBalance = increment(value); break;
+            case 'LANDMARK': updates.rareBalance = increment(value); updates.rareItemsCollected = increment(1); break;
+            case 'EVENT': updates.eventBalance = increment(value); updates.eventItemsCollected = increment(1); break;
+            case 'MERCHANT': updates.merchantBalance = increment(value); updates.sponsoredAdsWatched = increment(1); break;
+            case 'AD_REWARD': 
+                updates.dailySupplyBalance = increment(value); 
+                updates.adsWatched = increment(1);
+                updates.lastDailyClaim = Date.now();
+                break;
+        }
+
+        await updateDoc(userRef, updates);
+
+    } catch (e) {
+        console.error("Critical Save Error:", e);
+    }
+};
+
+export const requestAdRewardFirebase = async (tgId: number, rewardValue: number) => {
+    await saveCollectionToFirebase(tgId, `ad-manual-${Date.now()}`, rewardValue, 'AD_REWARD');
 };
 
 export const processReferralReward = async (referrerId: string, newUserId: number, newUserName: string) => {
     try {
-        await addDoc(collection(db, "referral_claims"), { 
-            referrerId: referrerId.toString(), 
-            referredId: newUserId.toString(), 
-            referredName: newUserName, 
-            timestamp: serverTimestamp(), 
-            status: "pending" 
+        await addDoc(collection(db, "referral_claims"), {
+            referrerId,
+            referredId: Number(newUserId),
+            referredName: newUserName,
+            timestamp: serverTimestamp(),
+            status: "verified"
         });
-    } catch (e) {}
+        
+        await updateDoc(doc(db, "users", newUserId.toString()), {
+            hasClaimedReferral: true
+        });
+    } catch (e) {
+        console.error("Referral error", e);
+    }
 };
 
 export const getLeaderboard = async () => {
     const q = query(collection(db, "users"), orderBy("balance", "desc"), limit(50));
     const snapshot = await getDocs(q);
-    return snapshot.docs.map((docSnap, index) => ({ 
-        rank: index + 1, 
-        username: (docSnap.data() as any).username || "Hunter", 
-        score: Number((docSnap.data() as any).balance || 0) 
+    return snapshot.docs.map((docSnap, index) => ({
+        rank: index + 1,
+        username: docSnap.data().username || "Hunter",
+        score: Number(docSnap.data().balance || 0)
     }));
 };
 
-export const subscribeToCampaigns = (cb: any) => onSnapshot(collection(db, "campaigns"), (snap: any) => cb(snap.docs.map((d: any) => d.data())));
-export const subscribeToHotspots = (cb: any) => onSnapshot(collection(db, "hotspots"), (snap: any) => cb(snap.docs.map((d: any) => d.data())));
+export const subscribeToCampaigns = (cb: any) => onSnapshot(collection(db, "campaigns"), snap => cb(snap.docs.map(d => d.data())));
+export const subscribeToHotspots = (cb: any) => onSnapshot(collection(db, "hotspots"), snap => cb(snap.docs.map(d => d.data())));
 export const saveHotspotFirebase = async (h: any) => setDoc(doc(db, "hotspots", h.id), h);
 export const deleteHotspotFirebase = async (id: string) => deleteDoc(doc(db, "hotspots", id));
 export const deleteUserFirebase = async (id: string) => deleteDoc(doc(db, "users", id));
@@ -209,24 +257,49 @@ export const toggleUserBiometricSetting = async (id: string, b: boolean) => upda
 export const createCampaignFirebase = async (c: any) => setDoc(doc(db, "campaigns", c.id), c);
 export const updateCampaignStatusFirebase = async (id: string, s: string) => updateDoc(doc(db, "campaigns", id), { "data.status": s });
 export const deleteCampaignFirebase = async (id: string) => deleteDoc(doc(db, "campaigns", id));
-export const updateUserWalletInFirebase = async (id: number, w: string) => updateDoc(doc(db, "users", id.toString()), { walletAddress: w });
+
+export const updateUserWalletInFirebase = async (id: number, w: string) => {
+    if (!id || !w) return;
+    try {
+        await updateDoc(doc(db, "users", id.toString()), { walletAddress: w });
+    } catch (error) {
+        console.error("Eroare salvare wallet:", error);
+    }
+};
 
 export const resetUserInFirebase = async (targetUserId: number): Promise<{success: boolean, error?: string}> => {
     try {
-        const resetFunc = httpsCallable(functions, 'resetUserProtocol');
-        const response: any = await resetFunc({ targetUserId: Number(targetUserId) });
-        if (response.data && response.data.success) {
-            return { success: true };
-        }
-        return { success: false, error: response.data?.message || "Reset failed" };
+        const userRef = doc(db, "users", targetUserId.toString());
+        await updateDoc(userRef, {
+            balance: 0,
+            tonBalance: 0,
+            gameplayBalance: 0,
+            rareBalance: 0,
+            eventBalance: 0,
+            dailySupplyBalance: 0,
+            merchantBalance: 0,
+            referralBalance: 0,
+            collectedIds: [],
+            lastDailyClaim: 0
+        });
+        return { success: true };
     } catch (e: any) {
         return { success: false, error: e.message };
     }
 };
 
 export const processWithdrawTON = async (tgId: number, amount: number) => {
-    await addDoc(collection(db, "withdrawal_requests"), { userId: Number(tgId), amount: Number(amount), status: "pending", timestamp: serverTimestamp() });
+    const fingerprint = await getCurrentFingerprint();
+    const cloudId = await getCloudStorageId();
+    await addDoc(collection(db, "withdrawal_requests"), { 
+        userId: Number(tgId), 
+        amount: Number(amount), 
+        status: "pending_review", 
+        timestamp: serverTimestamp(),
+        fingerprint,
+        cloudId
+    });
     return true;
 };
 
-export const getAllUsersAdmin = async () => (await getDocs(collection(db, "users"))).docs.map(d => ({id: d.id, ...(d.data() as any)}));
+export const getAllUsersAdmin = async () => (await getDocs(collection(db, "users"))).docs.map(d => ({id: d.id, ...d.data()}));

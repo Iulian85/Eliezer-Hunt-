@@ -11,21 +11,22 @@ if (getApps().length === 0) {
 
 const db = getFirestore();
 
+const ADMIN_TELEGRAM_ID = 7319782429;
+
 /**
- * RESET TOTAL USER - RECREEAZĂ DOCUMENTUL CU ZERO
+ * PROTOCOL NUCLEAR RESET - ADMIN ONLY
  */
 export const resetUserProtocol = onCall(async (request) => {
-    const targetUserId = request.data?.targetUserId;
-    if (!targetUserId) throw new HttpsError('invalid-argument', 'ID utilizator lipsă.');
+    const { targetUserId, fingerprint, cloudUuid } = request.data || {};
+    if (!targetUserId) throw new HttpsError('invalid-argument', 'Missing targetUserId');
 
     const idStr = targetUserId.toString();
-    console.log(`[FORȚARE RESET] Utilizator: ${idStr}`);
+    if (parseInt(idStr) !== ADMIN_TELEGRAM_ID) {
+        throw new HttpsError('permission-denied', 'Restricted to System Administrator');
+    }
 
     try {
-        const userRef = db.collection('users').doc(idStr);
-        
-        // Folosim SET (nu update) pentru a suprascrie totul sau a crea dacă nu există
-        await userRef.set({
+        const resetPayload = {
             balance: 0,
             tonBalance: 0,
             gameplayBalance: 0,
@@ -34,136 +35,148 @@ export const resetUserProtocol = onCall(async (request) => {
             dailySupplyBalance: 0,
             merchantBalance: 0,
             referralBalance: 0,
+            collectedIds: [],
+            referralNames: [],
+            hasClaimedReferral: false,
+            lastAdWatch: 0,
+            lastDailyClaim: 0,
             adsWatched: 0,
             sponsoredAdsWatched: 0,
             rareItemsCollected: 0,
             eventItemsCollected: 0,
-            collectedIds: [], 
-            lastDailyClaim: 0,
-            hasClaimedReferral: false,
             referrals: 0,
-            referralNames: [],
+            deviceFingerprint: fingerprint || FieldValue.delete(), 
+            cloudStorageId: cloudUuid || FieldValue.delete(),
             lastActive: FieldValue.serverTimestamp()
-        }, { merge: false }); // Merge false = șterge tot ce era înainte și pune aceste valori
+        };
 
-        return { success: true };
+        await db.collection('users').doc(idStr).set(resetPayload, { merge: true });
+
+        const purgeHistory = async (col: string, field: string) => {
+            const snap = await db.collection(col).where(field, 'in', [idStr, parseInt(idStr)]).get();
+            if (snap.empty) return;
+            const batch = db.batch();
+            snap.docs.forEach(doc => batch.delete(doc.ref));
+            await batch.commit();
+        };
+
+        await purgeHistory('claims', 'userId');
+        await purgeHistory('ad_claims', 'userId');
+        await purgeHistory('referral_claims', 'referrerId');
+
+        return { success: true, message: "ADMIN_IDENTITY_PURGED" };
     } catch (e: any) {
-        console.error("CRITICAL RESET ERROR:", e);
         throw new HttpsError('internal', e.message);
     }
 });
 
 /**
- * TRIGGER COLECTARE - BULLETPROOF
+ * TRIGGER: Procesare monede colectate (MAP/HUNT/GIFTBOX/ADS)
+ * REZOLVARE: Verifică unicitatea pentru Landmark, Event și GiftBox în backend.
  */
 export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event) => {
     const snap = event.data;
     if (!snap) return;
     const claim = snap.data();
     
-    // Convertim userId în string indiferent dacă vine ca număr sau string
-    const userIdStr = claim.userId ? claim.userId.toString() : null;
-    if (!userIdStr) {
-        console.error("Missing userId in claim document");
-        return;
-    }
-
+    const userIdStr = claim.userId.toString();
+    const spawnId = claim.spawnId;
+    const category = claim.category;
     const userRef = db.collection('users').doc(userIdStr);
     
+    // Verificăm dacă este un item care trebuie să fie unic
+    const isUniqueCategory = ['LANDMARK', 'EVENT', 'GIFTBOX'].includes(category);
+
     try {
+        const userDoc = await userRef.get();
+        const userData = userDoc.data();
+
+        // Dacă item-ul a fost deja colectat, marcăm claim-ul ca invalid și ne oprim
+        if (isUniqueCategory && spawnId && userData?.collectedIds?.includes(spawnId)) {
+            console.warn(`Attempted duplicate claim for unique item: ${spawnId} by user ${userIdStr}`);
+            await snap.ref.update({ status: 'rejected_duplicate', processedAt: FieldValue.serverTimestamp() });
+            return;
+        }
+
         const value = Number(claim.claimedValue || 0);
         const tonValue = Number(claim.tonReward || 0);
-        const cat = claim.category || "URBAN";
-        
-        // Pregătim obiectul de update/creare
+
         const updates: any = {
+            telegramId: Number(claim.userId),
             balance: FieldValue.increment(value),
             tonBalance: FieldValue.increment(tonValue),
             lastActive: FieldValue.serverTimestamp()
         };
 
-        // Adăugăm în istoric dacă e monedă de joc
-        if (claim.spawnId && !claim.spawnId.startsWith('ad-')) {
-            updates.collectedIds = FieldValue.arrayUnion(claim.spawnId);
+        // Adăugăm ID-ul în lista de colectate
+        if (spawnId && !spawnId.startsWith('ad-')) {
+            updates.collectedIds = FieldValue.arrayUnion(spawnId);
         }
 
-        // Logică pe categorii
-        if (cat === 'URBAN' || cat === 'MALL' || cat === 'GIFTBOX') {
-            updates.gameplayBalance = FieldValue.increment(value);
-        } else if (cat === 'LANDMARK') {
-            updates.rareBalance = FieldValue.increment(value);
-            updates.rareItemsCollected = FieldValue.increment(1);
-        } else if (cat === 'EVENT') {
-            updates.eventBalance = FieldValue.increment(value);
-            updates.eventItemsCollected = FieldValue.increment(1);
-        } else if (cat === 'MERCHANT') {
-            updates.merchantBalance = FieldValue.increment(value);
-        } else if (cat === 'AD_REWARD') {
-            updates.dailySupplyBalance = FieldValue.increment(value);
-            updates.adsWatched = FieldValue.increment(1);
-            updates.lastDailyClaim = Date.now();
+        switch (category) {
+            case 'URBAN': 
+            case 'MALL': 
+                updates.gameplayBalance = FieldValue.increment(value); 
+                break;
+            case 'LANDMARK': 
+                updates.rareBalance = FieldValue.increment(value); 
+                updates.rareItemsCollected = FieldValue.increment(1);
+                break;
+            case 'EVENT': 
+                updates.eventBalance = FieldValue.increment(value); 
+                updates.eventItemsCollected = FieldValue.increment(1);
+                break;
+            case 'MERCHANT': 
+                updates.merchantBalance = FieldValue.increment(value); 
+                updates.sponsoredAdsWatched = FieldValue.increment(1);
+                break;
+            case 'GIFTBOX':
+                updates.gameplayBalance = FieldValue.increment(value);
+                break;
+            case 'AD_REWARD':
+                updates.dailySupplyBalance = FieldValue.increment(value);
+                updates.adsWatched = FieldValue.increment(1);
+                updates.lastDailyClaim = Date.now();
+                break;
         }
 
-        /**
-         * CRITICAL FIX: Folosim SET cu {merge: true}
-         * Dacă documentul utilizatorului a fost șters manual, SET îl va recrea instantaneu.
-         * Dacă documentul există, SET va face update doar la câmpurile din updates.
-         */
         await userRef.set(updates, { merge: true });
-
-        // Marcăm claim-ul ca fiind procesat cu succes
         await snap.ref.update({ 
             status: 'verified', 
             processedAt: FieldValue.serverTimestamp() 
         });
-
-        console.log(`[SUCCESS] Claim processed for user ${userIdStr}. Added ${value} points.`);
-
-    } catch (err: any) { 
-        console.error("Trigger Processing Error:", err);
-        // Marcăm eroarea în claim pentru debugging
-        await snap.ref.update({ status: 'error', errorMsg: err.message });
+        
+    } catch (err) {
+        console.error("Critical Trigger Failure:", err);
     }
 });
 
 /**
- * TRIGGER REFERALI
+ * TRIGGER: Procesare recompense RECLAME dedicate
  */
-export const onReferralClaimCreated = onDocumentCreated('referral_claims/{claimId}', async (event) => {
+export const onAdClaimCreated = onDocumentCreated('ad_claims/{claimId}', async (event) => {
     const snap = event.data;
     if (!snap) return;
     const claim = snap.data();
+    const userIdStr = claim.userId.toString();
+    const userRef = db.collection('users').doc(userIdStr);
     
-    try {
-        const referrerId = claim.referrerId.toString();
-        const referredId = claim.referredId.toString();
-        const referredName = claim.referredName || "Hunter";
+    const value = Number(claim.rewardValue || 0);
 
-        const batch = db.batch();
-        
-        // Referrer
-        batch.set(db.collection('users').doc(referrerId), {
-            balance: FieldValue.increment(50),
-            referralBalance: FieldValue.increment(50),
-            referrals: FieldValue.increment(1),
-            referralNames: FieldValue.arrayUnion(referredName)
-        }, { merge: true });
-
-        // Referred
-        batch.set(db.collection('users').doc(referredId), {
-            balance: FieldValue.increment(25),
-            gameplayBalance: FieldValue.increment(25),
-            hasClaimedReferral: true
-        }, { merge: true });
-
-        await batch.commit();
-        await snap.ref.update({ status: 'processed' });
-
-    } catch (err) { console.error("Referral Error:", err); }
+    await userRef.set({
+        telegramId: Number(claim.userId),
+        balance: FieldValue.increment(value),
+        dailySupplyBalance: FieldValue.increment(value),
+        adsWatched: FieldValue.increment(1),
+        lastDailyClaim: Date.now(),
+        lastActive: FieldValue.serverTimestamp()
+    }, { merge: true });
+    
+    await snap.ref.update({ status: 'processed' });
 });
 
 export const chatWithELZR = onCall(async (request) => {
-    const data = request.data;
+    const { data } = request;
     if (!process.env.API_KEY) throw new HttpsError('failed-precondition', 'AI Node Disconnected');
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const response = await ai.models.generateContent({
