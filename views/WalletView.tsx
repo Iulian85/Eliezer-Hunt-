@@ -1,7 +1,6 @@
-
 import React, { useState, useEffect } from 'react';
 import { TonConnectButton } from '@tonconnect/ui-react';
-import { Gift, Loader2, ShieldCheck, Coins, TrendingUp, Megaphone, Star, Sparkles, Clock, Users, Wallet, ArrowUpRight, MapPin, Target, ShoppingBag, Crown } from 'lucide-react';
+import { Gift, Loader2, ShieldCheck, Coins, TrendingUp, Megaphone, Star, Sparkles, Clock, Users, Wallet, ArrowUpRight, Target, ShoppingBag, Crown, Zap, Activity } from 'lucide-react';
 import { showRewardedAd } from '../services/adsgram';
 import { processWithdrawTON } from '../services/firebase';
 import { REWARD_AD_VALUE, ADSGRAM_BLOCK_ID } from '../constants';
@@ -34,13 +33,11 @@ export const WalletView: React.FC<WalletViewProps> = ({
         lastDailyClaim = 0
     } = userState;
 
-    // Calcul Multiplicator
     const MAX_MULTIPLIER = 2.5; 
     const rawMultiplier = 1 + (Math.log10(referrals + 1) / 4);
     const refMultiplier = Math.min(MAX_MULTIPLIER, rawMultiplier);
-
     const totalWeightedScore = Math.floor(balance * refMultiplier);
-    const estimatedAllocation = totalWeightedScore / 1000000000000;
+    const estimatedAllocation = totalWeightedScore / 1000000;
 
     useEffect(() => {
         const checkCooldown = () => {
@@ -53,13 +50,11 @@ export const WalletView: React.FC<WalletViewProps> = ({
                 const h = Math.floor(diff / (1000 * 60 * 60));
                 const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
                 const s = Math.floor((diff % (1000 * 60)) / 1000);
-                
                 setTimeRemaining(`${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`);
             } else {
                 setTimeRemaining(null);
             }
         };
-
         checkCooldown();
         const interval = setInterval(checkCooldown, 1000);
         return () => clearInterval(interval);
@@ -85,131 +80,121 @@ export const WalletView: React.FC<WalletViewProps> = ({
     };
 
     return (
-        <div className="h-full w-full p-6 overflow-y-auto pb-40 no-scrollbar bg-slate-950">
-            <div className="flex justify-between items-center mb-6">
-                <h1 className="text-2xl font-bold text-white flex items-center gap-2 font-[Rajdhani] tracking-wide">
-                    <span className="bg-clip-text text-transparent bg-gradient-to-r from-amber-200 to-amber-500 uppercase">Wallet</span>
-                </h1>
+        <div className="h-full w-full p-6 overflow-y-auto pb-40 no-scrollbar bg-[#020617]">
+            <header className="flex justify-between items-center mb-8">
+                <div className="flex flex-col">
+                    <span className="text-[10px] text-cyan-500 font-black uppercase tracking-[0.3em] mb-1">Asset Node</span>
+                    <h1 className="text-2xl font-black text-white uppercase tracking-tighter font-[Rajdhani]">Vault</h1>
+                </div>
                 <div className="scale-90 origin-right"><TonConnectButton /></div>
-            </div>
+            </header>
 
-            {/* ASSET CARD */}
-            <div className="glass-panel p-8 rounded-3xl mb-8 relative overflow-hidden border border-white/10 shadow-[0_8px_40px_rgba(0,0,0,0.5)]">
-                <div className="absolute -right-4 -top-4 bg-amber-500/10 w-48 h-48 rounded-full blur-3xl"></div>
-                <div className="flex flex-col items-center text-center relative z-10">
-                    <div className="p-4 bg-amber-500/10 rounded-full border border-amber-500/20 mb-4"><Coins className="text-amber-400" size={32} /></div>
-                    <span className="text-[10px] text-slate-400 uppercase tracking-[0.3em] font-black mb-2">Total ELZR Points</span>
-                    <span className="text-6xl font-black text-white tracking-tighter font-[Rajdhani]">{balance.toLocaleString()}</span>
+            {/* BALANCE CARD */}
+            <div className="bg-slate-900 border-2 border-slate-800 rounded-[2.5rem] p-8 mb-8 relative overflow-hidden shadow-2xl">
+                <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-cyan-500/20 to-transparent"></div>
+                <div className="flex flex-col items-center text-center">
+                    <div className="w-16 h-16 rounded-2xl bg-cyan-500/5 border border-cyan-500/20 flex items-center justify-center mb-4">
+                        <Coins className="text-cyan-400" size={32} />
+                    </div>
+                    <span className="text-[10px] text-slate-500 uppercase tracking-[0.4em] font-black mb-1">Extraction Points</span>
+                    <div className="flex items-baseline gap-2">
+                        <span className="text-6xl font-black text-white tracking-tighter font-[Rajdhani]">{balance.toLocaleString()}</span>
+                        <span className="text-xs text-cyan-500 font-black uppercase">PTS</span>
+                    </div>
                 </div>
             </div>
 
-            {/* AIRDROP ESTIMATION */}
-            <div className="mb-8">
-                <div className="flex items-center gap-2 mb-3 px-1">
-                    <ShieldCheck className="text-green-400" size={18} />
-                    <h2 className="text-lg font-bold text-white font-[Rajdhani] tracking-wide">Airdrop Estimation</h2>
+            {/* AIRDROP SECTION */}
+            <section className="mb-8">
+                <div className="flex items-center gap-2 mb-4 px-2">
+                    <Activity className="text-cyan-400" size={16} />
+                    <h2 className="text-[11px] font-black text-slate-300 uppercase tracking-widest">Protocol Metrics</h2>
                 </div>
-                <div className="glass-panel border border-white/5 rounded-3xl p-6 shadow-xl space-y-4">
-                    <div className="text-center mb-6 border-b border-white/5 pb-6">
-                        <span className="text-[10px] text-slate-500 uppercase tracking-widest mb-1 block font-bold">EST. $ELZR ALLOCATION</span>
-                        <div className="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-green-300 via-green-400 to-emerald-500 font-mono tracking-tighter">
-                            ~{estimatedAllocation.toFixed(8)}
+                
+                <div className="bg-slate-900 border border-slate-800 rounded-[2.5rem] p-6 shadow-xl space-y-6">
+                    <div className="bg-black/40 rounded-3xl p-5 border border-white/5 text-center">
+                        <span className="text-[9px] text-slate-500 uppercase tracking-widest mb-2 block font-black">Estimated $ELZR Allocation</span>
+                        <div className="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-white to-blue-500 font-mono tracking-tighter">
+                            {estimatedAllocation.toFixed(6)}
                         </div>
                     </div>
                     
-                    <div className="space-y-4">
-                        <div className="flex justify-between items-center">
-                            <div className="flex items-center gap-2">
-                                <Target size={14} className="text-slate-400" />
-                                <span className="text-[11px] text-slate-400 font-medium">Gameplay (Urban/Mall)</span>
+                    <div className="grid grid-cols-1 gap-3">
+                        <div className="flex justify-between items-center p-3 bg-slate-800/20 rounded-2xl border border-white/5">
+                            <div className="flex items-center gap-3">
+                                <div className="p-2 bg-slate-800 rounded-lg"><Target size={14} className="text-slate-400" /></div>
+                                <span className="text-[10px] text-slate-400 font-black uppercase">Gameplay Yield</span>
                             </div>
-                            <span className="text-xs font-mono font-bold text-white">{gameplayBalance.toLocaleString()}</span>
+                            <span className="text-xs font-mono font-black text-white">{gameplayBalance.toLocaleString()}</span>
                         </div>
-                        <div className="flex justify-between items-center">
-                            <div className="flex items-center gap-2">
-                                <Crown size={14} className="text-purple-400" />
-                                <span className="text-[11px] text-purple-400 font-medium">Rare Coins (Landmarks)</span>
+                        <div className="flex justify-between items-center p-3 bg-slate-800/20 rounded-2xl border border-white/5">
+                            <div className="flex items-center gap-3">
+                                <div className="p-2 bg-slate-800 rounded-lg"><Crown size={14} className="text-amber-500" /></div>
+                                <span className="text-[10px] text-slate-400 font-black uppercase">Landmark Bonus</span>
                             </div>
-                            <span className="text-xs font-mono font-bold text-purple-400">{rareBalance.toLocaleString()}</span>
+                            <span className="text-xs font-mono font-black text-amber-400">{rareBalance.toLocaleString()}</span>
                         </div>
-                        <div className="flex justify-between items-center">
-                            <div className="flex items-center gap-2">
-                                <Sparkles size={14} className="text-blue-400" />
-                                <span className="text-[11px] text-blue-400 font-medium">Event Coins</span>
+                        <div className="flex justify-between items-center p-3 bg-slate-800/20 rounded-2xl border border-white/5">
+                            <div className="flex items-center gap-3">
+                                <div className="p-2 bg-slate-800 rounded-lg"><Zap size={14} className="text-cyan-400" /></div>
+                                <span className="text-[10px] text-slate-400 font-black uppercase">Merchant Drops</span>
                             </div>
-                            <span className="text-xs font-mono font-bold text-blue-400">{eventBalance.toLocaleString()}</span>
-                        </div>
-                        <div className="flex justify-between items-center">
-                            <div className="flex items-center gap-2">
-                                <Clock size={14} className="text-slate-400" />
-                                <span className="text-[11px] text-slate-400 font-medium">Daily Supply (Rewards)</span>
-                            </div>
-                            <span className="text-xs font-mono font-bold text-white">{dailySupplyBalance.toLocaleString()}</span>
-                        </div>
-                        <div className="flex justify-between items-center">
-                            <div className="flex items-center gap-2">
-                                <Megaphone size={14} className="text-red-500" />
-                                <span className="text-[11px] text-red-500 font-medium">Merchant Drops</span>
-                            </div>
-                            <span className="text-xs font-mono font-bold text-red-500">{merchantBalance.toLocaleString()}</span>
-                        </div>
-                        <div className="flex justify-between items-center">
-                            <div className="flex items-center gap-2">
-                                <Users size={14} className="text-cyan-400" />
-                                <span className="text-[11px] text-cyan-400 font-medium">Referral Bonus (Frens)</span>
-                            </div>
-                            <span className="text-xs font-mono font-bold text-cyan-400">{referralBalance.toLocaleString()}</span>
+                            <span className="text-xs font-mono font-black text-cyan-400">{merchantBalance.toLocaleString()}</span>
                         </div>
                     </div>
                 </div>
-            </div>
+            </section>
 
-            {/* DAILY REWARD CARD */}
-            <div className="glass-panel p-5 rounded-3xl flex items-center justify-between mb-8 border border-white/5">
+            {/* DAILY REWARD */}
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 flex items-center justify-between mb-8 shadow-lg">
                 <div className="flex items-center gap-4">
-                    <div className={`p-3 rounded-2xl ${timeRemaining ? 'bg-slate-800 text-slate-500' : 'bg-green-900/40 text-green-400 animate-pulse'}`}><Gift size={24} /></div>
+                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${timeRemaining ? 'bg-slate-800 text-slate-600' : 'bg-green-500/10 text-green-400 animate-pulse'}`}>
+                        <Gift size={24} />
+                    </div>
                     <div>
-                        <h3 className="font-bold text-white text-sm">Daily Reward</h3>
-                        <p className="text-[10px] text-slate-400">+500 Pts (Daily Supply) {timeRemaining && <span className="text-amber-500 font-bold ml-1">• {timeRemaining}</span>}</p>
+                        <h3 className="font-black text-white text-xs uppercase tracking-tight">Daily Uplink</h3>
+                        <p className="text-[9px] text-slate-500 font-bold uppercase">{timeRemaining ? `Cooldown: ${timeRemaining}` : "+500 Extraction Pts"}</p>
                     </div>
                 </div>
-                <button onClick={handleWatchAd} disabled={loadingAd || !!timeRemaining} className={`px-6 py-2.5 rounded-xl font-bold text-xs transition-all shadow-lg active:scale-95 ${timeRemaining ? "bg-slate-800 text-slate-600 cursor-not-allowed" : "bg-white text-black hover:bg-slate-200"}`}>
-                    {loadingAd ? <Loader2 className="animate-spin" size={14}/> : (timeRemaining ? "CLAIMED" : "CLAIM")}
+                <button 
+                    onClick={handleWatchAd} 
+                    disabled={loadingAd || !!timeRemaining} 
+                    className={`px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all shadow-xl active:scale-95 border-2 ${timeRemaining ? "bg-transparent border-slate-800 text-slate-700 cursor-not-allowed" : "bg-white text-black border-white"}`}
+                >
+                    {loadingAd ? <Loader2 className="animate-spin" size={14}/> : (timeRemaining ? "LOCKED" : "CLAIM")}
                 </button>
             </div>
 
-            {/* TON REWARDS SECTION (REDESIGNED) */}
-            <div className="glass-panel p-8 rounded-3xl mb-8 relative overflow-hidden border border-blue-500/20 shadow-[0_0_30px_rgba(37,99,235,0.1)]">
-                <div className="absolute -right-10 -top-10 w-40 h-40 bg-blue-500/10 rounded-full blur-3xl"></div>
-                <div className="relative z-10">
-                    <div className="flex items-center gap-2 mb-6">
-                        <div className="p-2 bg-blue-500/20 rounded-lg">
-                            <Wallet className="text-blue-400" size={18} />
+            {/* TON WITHDRAWAL */}
+            <div className="bg-gradient-to-br from-blue-600 to-cyan-700 rounded-[2.5rem] p-8 mb-8 relative overflow-hidden shadow-2xl border-2 border-white/10">
+                <div className="absolute -right-10 -bottom-10 w-48 h-48 bg-white/10 rounded-full blur-3xl"></div>
+                <div className="relative z-10 text-center">
+                    <div className="flex justify-center mb-4">
+                        <div className="p-3 bg-white/20 rounded-2xl backdrop-blur-md">
+                            <Wallet className="text-white" size={24} />
                         </div>
-                        <span className="text-[10px] text-blue-200 font-black uppercase tracking-widest">TON Asset Reserve</span>
                     </div>
-                    
-                    <div className="mb-8 text-center">
-                        <div className="text-5xl font-black text-white font-mono tracking-tighter">
-                            {tonBalance.toFixed(2)} <span className="text-lg text-blue-400">TON</span>
-                        </div>
-                        <p className="text-[9px] text-slate-500 uppercase mt-2 font-bold tracking-widest">Verified Multi-Chain Balance</p>
+                    <span className="text-[10px] text-white/60 font-black uppercase tracking-[0.3em] mb-1 block">Liquid Reserve</span>
+                    <div className="text-5xl font-black text-white font-mono tracking-tighter mb-8">
+                        {tonBalance.toFixed(2)} <span className="text-lg opacity-60">TON</span>
                     </div>
 
                     <button 
                         onClick={handleWithdraw} 
                         disabled={tonBalance < 10 || withdrawing}
-                        className={`w-full py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-2 transition-all active:scale-95 shadow-xl
-                            ${tonBalance >= 10 ? 'bg-white text-blue-900 shadow-blue-400/20' : 'bg-slate-800 text-slate-500 cursor-not-allowed'}
+                        className={`w-full py-4 rounded-2xl font-black text-xs uppercase tracking-[0.2em] flex items-center justify-center gap-3 transition-all active:scale-95 shadow-2xl
+                            ${tonBalance >= 10 ? 'bg-white text-blue-900' : 'bg-black/20 text-white/40 cursor-not-allowed border border-white/10'}
                         `}
                     >
-                        {withdrawing ? <Loader2 className="animate-spin" size={16}/> : (withdrawSuccess ? "Success! Check Wallet" : (tonBalance >= 10 ? "Withdraw Assets" : "Min 10 TON"))}
-                        {!withdrawing && !withdrawSuccess && tonBalance >= 10 && <ArrowUpRight size={16}/>}
+                        {withdrawing ? <Loader2 className="animate-spin" /> : (withdrawSuccess ? "Uplink Success" : (tonBalance >= 10 ? "Withdraw Assets" : "Min 10 TON Reserve"))}
+                        {!withdrawing && !withdrawSuccess && tonBalance >= 10 && <ArrowUpRight size={18}/>}
                     </button>
                 </div>
             </div>
             
-            <p className="text-center text-[9px] text-slate-600 mt-2 font-mono uppercase tracking-[0.3em] font-bold">100 PTS = 0.000000001 $ELZR</p>
+            <footer className="text-center text-[8px] text-slate-700 font-black uppercase tracking-[0.4em] mt-4">
+                Extraction Protocol V1.0.4 • Blockchain Verified
+            </footer>
         </div>
     );
 }

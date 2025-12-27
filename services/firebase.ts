@@ -1,4 +1,3 @@
-
 import { initializeApp, getApps, getApp } from "@firebase/app";
 import { 
     getFirestore, 
@@ -12,7 +11,6 @@ import {
     orderBy, 
     limit, 
     getDocs,
-    addDoc,
     serverTimestamp,
     increment,
     deleteDoc,
@@ -21,7 +19,7 @@ import {
 import { getFunctions, httpsCallable } from "@firebase/functions";
 import FingerprintJS from '@fingerprintjs/fingerprintjs';
 
-import { UserState, Campaign, HotspotDefinition, HotspotCategory, Coordinate } from "../types";
+import { UserState, HotspotCategory, Coordinate } from "../types";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -51,16 +49,11 @@ export const getCloudStorageId = (): Promise<string> => {
         if (!tg?.CloudStorage) { resolve("no_cloud_storage"); return; }
         tg.CloudStorage.getItem('elzr_uuid', (err, value) => {
             if (value) resolve(value);
-            else { const newUuid = crypto.randomUUID(); tg.CloudStorage.setItem('elzr_uuid', newUuid, () => resolve(newUuid)); }
+            else { 
+                const newUuid = crypto.randomUUID(); 
+                tg.CloudStorage.setItem('elzr_uuid', newUuid, () => resolve(newUuid)); 
+            }
         });
-    });
-};
-
-export const clearCloudStorageId = (): Promise<void> => {
-    return new Promise((resolve) => {
-        const tg = window.Telegram?.WebApp;
-        if (!tg?.CloudStorage) { resolve(); return; }
-        tg.CloudStorage.setItem('elzr_uuid', '', () => resolve());
     });
 };
 
@@ -89,12 +82,10 @@ export const subscribeToUserProfile = (tgId: number, defaults: UserState, callba
         } else {
             callback(defaults);
         }
-    }, (error) => {
-        console.error("Profile Subscription Error:", error);
     });
 };
 
-export const syncUserWithFirebase = async (userData: any, localState: UserState, fingerprint: string, cloudId: string, initDataRaw?: string): Promise<UserState> => {
+export const syncUserWithFirebase = async (userData: any, localState: UserState, fingerprint: string, cloudId: string): Promise<UserState> => {
     if (!userData.id) return localState;
     const userIdStr = String(userData.id);
     const userDocRef = doc(db, "users", userIdStr);
@@ -138,16 +129,15 @@ export const syncUserWithFirebase = async (userData: any, localState: UserState,
 export const saveCollectionToFirebase = async (tgId: number, spawnId: string, value: number, category?: HotspotCategory, tonReward: number = 0) => {
     if (!tgId) return;
     try {
-        await addDoc(collection(db, "claims"), { 
+        const secureClaimFunc = httpsCallable(functions, 'secureClaim');
+        await secureClaimFunc({ 
             userId: Number(tgId), 
             spawnId: String(spawnId), 
             claimedValue: Number(value), 
             tonReward: Number(tonReward), 
-            category: category || "URBAN", 
-            timestamp: serverTimestamp(), 
-            status: "pending" 
+            category: category || "URBAN" 
         });
-    } catch (e) { console.error("Save Error:", e); }
+    } catch (e) { console.error("Secure Save Error:", e); }
 };
 
 export const processReferralReward = async (referrerId: string, userId: number, userName: string) => {
@@ -176,7 +166,7 @@ export const resetUserInFirebase = async (targetUserId: number): Promise<{succes
     try {
         const resetFunc = httpsCallable(functions, 'resetUserProtocol');
         const res: any = await resetFunc({ targetUserId: Number(targetUserId) });
-        return { success: res.data?.success };
+        return { success: !!(res.data as any)?.success };
     } catch (e: any) { return { success: false, error: e.message }; }
 };
 
@@ -206,3 +196,6 @@ export const processWithdrawTON = async (tgId: number, amount: number) => {
     await addDoc(collection(db, "withdrawal_requests"), { userId: Number(tgId), amount: Number(amount), status: "pending", timestamp: serverTimestamp() });
     return true;
 };
+function addDoc(arg0: any, arg1: { userId: number; amount: number; status: string; timestamp: any; }) {
+    throw new Error("Function not implemented.");
+}
