@@ -84,6 +84,9 @@ const sanitizeUserData = (data: any, defaults: UserState): UserState => {
         dailySupplyBalance: Number(data.dailySupplyBalance || 0),
         merchantBalance: Number(data.merchantBalance || 0),
         referralBalance: Number(data.referralBalance || 0),
+        adsWatched: Number(data.adsWatched || 0),
+        referrals: Number(data.referrals || 0),
+        lastDailyClaim: Number(data.lastDailyClaim || 0),
         referralNames: data.referralNames || [],
         hasClaimedReferral: !!data.hasClaimedReferral,
         collectedIds: data.collectedIds || []
@@ -94,6 +97,7 @@ export const subscribeToUserProfile = (tgId: number, defaults: UserState, callba
     if (!tgId) return () => {};
     return onSnapshot(doc(db, "users", tgId.toString()), (docSnap) => {
         if (docSnap.exists()) callback(sanitizeUserData(docSnap.data(), defaults));
+        else callback(defaults); // Returnăm zero-uri dacă documentul e șters
     });
 };
 
@@ -108,7 +112,31 @@ export const syncUserWithFirebase = async (userData: any, localState: UserState,
             await updateDoc(userDocRef, { username: displayName, cloudStorageId: cloudId, deviceFingerprint: fingerprint, lastActive: serverTimestamp() });
             return sanitizeUserData(userDoc.data(), localState);
         } else {
-            const newUser = { telegramId: userData.id, username: displayName, photoUrl: userData.photoUrl || '', deviceFingerprint: fingerprint, cloudStorageId: cloudId, balance: 0, tonBalance: 0, gameplayBalance: 0, rareBalance: 0, eventBalance: 0, dailySupplyBalance: 0, merchantBalance: 0, referralBalance: 0, collectedIds: [], joinedAt: serverTimestamp(), lastActive: serverTimestamp(), biometricEnabled: true, referralNames: [], hasClaimedReferral: false };
+            // Dacă ai șters baza de date, recreăm documentul cu TOATE valorile la 0
+            const newUser = { 
+                telegramId: userData.id, 
+                username: displayName, 
+                photoUrl: userData.photoUrl || '', 
+                deviceFingerprint: fingerprint, 
+                cloudStorageId: cloudId, 
+                balance: 0, 
+                tonBalance: 0, 
+                gameplayBalance: 0, 
+                rareBalance: 0, 
+                eventBalance: 0, 
+                dailySupplyBalance: 0, 
+                merchantBalance: 0, 
+                referralBalance: 0, 
+                adsWatched: 0,
+                referrals: 0,
+                lastDailyClaim: 0,
+                collectedIds: [], 
+                joinedAt: serverTimestamp(), 
+                lastActive: serverTimestamp(), 
+                biometricEnabled: true, 
+                referralNames: [], 
+                hasClaimedReferral: false 
+            };
             await setDoc(userDocRef, newUser);
             return newUser as any;
         }
@@ -147,14 +175,11 @@ export const deleteCampaignFirebase = async (id: string) => deleteDoc(doc(db, "c
 export const updateUserWalletInFirebase = async (id: number, w: string) => updateDoc(doc(db, "users", id.toString()), { walletAddress: w });
 
 export const resetUserInFirebase = async (targetUserId: number): Promise<{success: boolean, error?: string}> => {
-    console.log("[Firebase Service] Inițiere apel resetUserProtocol pentru:", targetUserId);
     try {
         const resetFunc = httpsCallable(functions, 'resetUserProtocol');
-        const response: any = await resetFunc({ targetUserId });
-        console.log("[Firebase Service] Răspuns server:", response.data);
+        await resetFunc({ targetUserId });
         return { success: true };
     } catch (e: any) {
-        console.error("[Firebase Service] EROARE APEL FUNCȚIE:", e);
         return { success: false, error: e.message || "Unknown Function Error" };
     }
 };
