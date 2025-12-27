@@ -12,24 +12,20 @@ if (getApps().length === 0) {
 const db = getFirestore();
 
 /**
- * RESET USER - IMPLEMENTARE V2 ROBUSTĂ
+ * RESET TOTAL USER - RECREEAZĂ DOCUMENTUL CU ZERO
  */
 export const resetUserProtocol = onCall(async (request) => {
-    const data = request.data;
-    const targetUserId = data?.targetUserId;
-
-    if (!targetUserId) {
-        console.error("[RESET] Missing targetUserId");
-        throw new HttpsError('invalid-argument', 'ID utilizator lipsă.');
-    }
+    const targetUserId = request.data?.targetUserId;
+    if (!targetUserId) throw new HttpsError('invalid-argument', 'ID utilizator lipsă.');
 
     const idStr = targetUserId.toString();
-    console.log(`[RESET START] Hunter ID: ${idStr}`);
+    console.log(`[FORȚARE RESET] Utilizator: ${idStr}`);
 
     try {
         const userRef = db.collection('users').doc(idStr);
         
-        const resetPayload = {
+        // Folosim SET (nu update) pentru a suprascrie totul sau a crea dacă nu există
+        await userRef.set({
             balance: 0,
             tonBalance: 0,
             gameplayBalance: 0,
@@ -48,67 +44,58 @@ export const resetUserProtocol = onCall(async (request) => {
             referrals: 0,
             referralNames: [],
             lastActive: FieldValue.serverTimestamp()
-        };
+        }, { merge: false }); // Merge false = șterge tot ce era înainte și pune aceste valori
 
-        // Folosim SET cu merge:false pentru a șterge orice câmp vechi care nu e în payload
-        await userRef.set(resetPayload);
-
-        console.log(`[RESET SUCCESS] Data cleared for ${idStr}`);
-        return { success: true, message: "Protocol Reset Complete" };
-
+        return { success: true };
     } catch (e: any) {
-        console.error("[RESET CRITICAL ERROR]", e);
-        throw new HttpsError('internal', `Eroare sistem: ${e.message}`);
+        console.error("CRITICAL RESET ERROR:", e);
+        throw new HttpsError('internal', e.message);
     }
 });
 
 /**
- * TRIGGER COLECTARE - PROCESARE INSTANTANEE
+ * TRIGGER COLECTARE - BULLETPROOF
  */
 export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event) => {
     const snap = event.data;
-    if (!snap) {
-        console.error("[TRIGGER] No data snapshot");
-        return;
-    }
-    
+    if (!snap) return;
     const claim = snap.data();
-    const claimId = event.params.claimId;
     
-    if (!claim.userId) {
-        console.error(`[TRIGGER] Claim ${claimId} misses userId`);
+    // Convertim userId în string indiferent dacă vine ca număr sau string
+    const userIdStr = claim.userId ? claim.userId.toString() : null;
+    if (!userIdStr) {
+        console.error("Missing userId in claim document");
         return;
     }
 
-    const userIdStr = claim.userId.toString();
     const userRef = db.collection('users').doc(userIdStr);
     
-    console.log(`[CLAIM START] Processing ${claim.category} for user ${userIdStr}`);
-
     try {
         const value = Number(claim.claimedValue || 0);
         const tonValue = Number(claim.tonReward || 0);
+        const cat = claim.category || "URBAN";
         
-        // Obiect de update cu incrementare atomică
+        // Pregătim obiectul de update/creare
         const updates: any = {
             balance: FieldValue.increment(value),
             tonBalance: FieldValue.increment(tonValue),
             lastActive: FieldValue.serverTimestamp()
         };
 
-        // Adăugare ID în istoric dacă nu e reclamă
+        // Adăugăm în istoric dacă e monedă de joc
         if (claim.spawnId && !claim.spawnId.startsWith('ad-')) {
             updates.collectedIds = FieldValue.arrayUnion(claim.spawnId);
         }
 
-        // Distribuție pe categorii
-        const cat = claim.category;
+        // Logică pe categorii
         if (cat === 'URBAN' || cat === 'MALL' || cat === 'GIFTBOX') {
             updates.gameplayBalance = FieldValue.increment(value);
         } else if (cat === 'LANDMARK') {
             updates.rareBalance = FieldValue.increment(value);
+            updates.rareItemsCollected = FieldValue.increment(1);
         } else if (cat === 'EVENT') {
             updates.eventBalance = FieldValue.increment(value);
+            updates.eventItemsCollected = FieldValue.increment(1);
         } else if (cat === 'MERCHANT') {
             updates.merchantBalance = FieldValue.increment(value);
         } else if (cat === 'AD_REWARD') {
@@ -117,18 +104,25 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
             updates.lastDailyClaim = Date.now();
         }
 
-        // EXECUTĂM ACTUALIZAREA UTILIZATORULUI
-        // Merge: true este vital aici dacă documentul utilizatorului a fost șters anterior
+        /**
+         * CRITICAL FIX: Folosim SET cu {merge: true}
+         * Dacă documentul utilizatorului a fost șters manual, SET îl va recrea instantaneu.
+         * Dacă documentul există, SET va face update doar la câmpurile din updates.
+         */
         await userRef.set(updates, { merge: true });
 
-        // MARCĂM CEREREA CA VERIFICATĂ
-        await snap.ref.update({ status: 'verified', processedAt: FieldValue.serverTimestamp() });
-        
-        console.log(`[CLAIM SUCCESS] User ${userIdStr} updated (+${value} Pts)`);
+        // Marcăm claim-ul ca fiind procesat cu succes
+        await snap.ref.update({ 
+            status: 'verified', 
+            processedAt: FieldValue.serverTimestamp() 
+        });
+
+        console.log(`[SUCCESS] Claim processed for user ${userIdStr}. Added ${value} points.`);
 
     } catch (err: any) { 
-        console.error(`[CLAIM ERROR] Failed to process ${claimId}:`, err);
-        await snap.ref.update({ status: 'error', errorMessage: err.message });
+        console.error("Trigger Processing Error:", err);
+        // Marcăm eroarea în claim pentru debugging
+        await snap.ref.update({ status: 'error', errorMsg: err.message });
     }
 });
 
@@ -139,7 +133,6 @@ export const onReferralClaimCreated = onDocumentCreated('referral_claims/{claimI
     const snap = event.data;
     if (!snap) return;
     const claim = snap.data();
-    const claimId = event.params.claimId;
     
     try {
         const referrerId = claim.referrerId.toString();
@@ -148,7 +141,7 @@ export const onReferralClaimCreated = onDocumentCreated('referral_claims/{claimI
 
         const batch = db.batch();
         
-        // Update Referrer
+        // Referrer
         batch.set(db.collection('users').doc(referrerId), {
             balance: FieldValue.increment(50),
             referralBalance: FieldValue.increment(50),
@@ -156,7 +149,7 @@ export const onReferralClaimCreated = onDocumentCreated('referral_claims/{claimI
             referralNames: FieldValue.arrayUnion(referredName)
         }, { merge: true });
 
-        // Update Referred
+        // Referred
         batch.set(db.collection('users').doc(referredId), {
             balance: FieldValue.increment(25),
             gameplayBalance: FieldValue.increment(25),
@@ -165,32 +158,18 @@ export const onReferralClaimCreated = onDocumentCreated('referral_claims/{claimI
 
         await batch.commit();
         await snap.ref.update({ status: 'processed' });
-        console.log(`[REF SUCCESS] Claim ${claimId} processed.`);
 
-    } catch (err) { 
-        console.error(`[REF ERROR] ${claimId}:`, err); 
-    }
+    } catch (err) { console.error("Referral Error:", err); }
 });
 
-/**
- * AI PROXY
- */
 export const chatWithELZR = onCall(async (request) => {
     const data = request.data;
     if (!process.env.API_KEY) throw new HttpsError('failed-precondition', 'AI Node Disconnected');
-    
-    try {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-        const response = await ai.models.generateContent({
-            model: 'gemini-3-flash-preview',
-            contents: data.messages.map((m: any) => ({ 
-                role: m.role, 
-                parts: [{ text: m.text.substring(0, 500) }] 
-            })),
-            config: { systemInstruction: "You are ELZR System Scout.", temperature: 0.7 }
-        });
-        return { text: response.text };
-    } catch (e: any) {
-        throw new HttpsError('internal', 'AI Terminal Error');
-    }
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const response = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: data.messages.map((m: any) => ({ role: m.role, parts: [{ text: m.text.substring(0, 500) }] })),
+        config: { systemInstruction: "You are ELZR System Scout.", temperature: 0.7 }
+    });
+    return { text: response.text };
 });

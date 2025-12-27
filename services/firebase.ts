@@ -100,6 +100,7 @@ export const subscribeToUserProfile = (tgId: number, defaults: UserState, callba
         if (docSnap.exists()) {
             callback(sanitizeUserData(docSnap.data(), defaults));
         } else {
+            // Dacă userul lipsește din DB, trimitem default-urile (0-uri) în UI
             callback(defaults);
         }
     }, (error) => {
@@ -116,6 +117,7 @@ export const syncUserWithFirebase = async (userData: any, localState: UserState,
     try {
         const userDoc = await getDoc(userDocRef);
         if (userDoc.exists()) {
+            const data = userDoc.data();
             await updateDoc(userDocRef, { 
                 username: displayName, 
                 cloudStorageId: cloudId, 
@@ -123,8 +125,9 @@ export const syncUserWithFirebase = async (userData: any, localState: UserState,
                 lastActive: serverTimestamp(),
                 photoUrl: userData.photoUrl || ''
             });
-            return sanitizeUserData(userDoc.data(), localState);
+            return sanitizeUserData(data, localState);
         } else {
+            // DACĂ LIPSEȘTE (după delete manual), ÎL CREĂM CU TOATE VALORILE LA ZERO
             const newUser: any = { 
                 telegramId: userData.id, 
                 username: displayName, 
@@ -161,11 +164,12 @@ export const syncUserWithFirebase = async (userData: any, localState: UserState,
 export const saveCollectionToFirebase = async (tgId: number, spawnId: string, value: number, category?: HotspotCategory, tonReward: number = 0) => {
     if (!tgId) return;
     try {
+        // userId trebuie să fie întotdeauna număr pentru trigger
         await addDoc(collection(db, "claims"), { 
-            userId: tgId, 
-            spawnId, 
-            claimedValue: value, 
-            tonReward, 
+            userId: Number(tgId), 
+            spawnId: spawnId.toString(), 
+            claimedValue: Number(value), 
+            tonReward: Number(tonReward), 
             category: category || "URBAN", 
             timestamp: serverTimestamp(), 
             status: "pending" 
@@ -176,7 +180,7 @@ export const saveCollectionToFirebase = async (tgId: number, spawnId: string, va
 export const processReferralReward = async (referrerId: string, newUserId: number, newUserName: string) => {
     try {
         await addDoc(collection(db, "referral_claims"), { 
-            referrerId, 
+            referrerId: referrerId.toString(), 
             referredId: newUserId.toString(), 
             referredName: newUserName, 
             timestamp: serverTimestamp(), 
@@ -208,22 +212,20 @@ export const deleteCampaignFirebase = async (id: string) => deleteDoc(doc(db, "c
 export const updateUserWalletInFirebase = async (id: number, w: string) => updateDoc(doc(db, "users", id.toString()), { walletAddress: w });
 
 export const resetUserInFirebase = async (targetUserId: number): Promise<{success: boolean, error?: string}> => {
-    console.log("[FIREBASE] Calling resetUserProtocol for:", targetUserId);
     try {
         const resetFunc = httpsCallable(functions, 'resetUserProtocol');
-        const response: any = await resetFunc({ targetUserId });
+        const response: any = await resetFunc({ targetUserId: Number(targetUserId) });
         if (response.data && response.data.success) {
             return { success: true };
         }
         return { success: false, error: response.data?.message || "Reset failed" };
     } catch (e: any) {
-        console.error("[FIREBASE] Reset Function Call Error:", e);
-        return { success: false, error: e.message || "Unknown error during function call" };
+        return { success: false, error: e.message };
     }
 };
 
 export const processWithdrawTON = async (tgId: number, amount: number) => {
-    await addDoc(collection(db, "withdrawal_requests"), { userId: tgId, amount, status: "pending", timestamp: serverTimestamp() });
+    await addDoc(collection(db, "withdrawal_requests"), { userId: Number(tgId), amount: Number(amount), status: "pending", timestamp: serverTimestamp() });
     return true;
 };
 
