@@ -72,69 +72,80 @@ export const resetUserProtocol = onCall(async (request) => {
 
 /**
  * TRIGGER: Procesare monede colectate (MAP/HUNT/GIFTBOX/ADS)
- * REZOLVARE: Alocă punctele și actualizează balanța automat.
+ * REZOLVARE: Verifică unicitatea pentru Landmark, Event și GiftBox în backend.
  */
 export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event) => {
     const snap = event.data;
     if (!snap) return;
     const claim = snap.data();
     
-    // Asigurăm consistența ID-ului (String pentru document ID)
     const userIdStr = claim.userId.toString();
+    const spawnId = claim.spawnId;
+    const category = claim.category;
     const userRef = db.collection('users').doc(userIdStr);
     
-    const value = Number(claim.claimedValue || 0);
-    const tonValue = Number(claim.tonReward || 0);
+    // Verificăm dacă este un item care trebuie să fie unic
+    const isUniqueCategory = ['LANDMARK', 'EVENT', 'GIFTBOX'].includes(category);
 
-    // Schema de bază pentru a evita erori de "missing fields"
-    const updates: any = {
-        telegramId: Number(claim.userId),
-        balance: FieldValue.increment(value),
-        tonBalance: FieldValue.increment(tonValue),
-        lastActive: FieldValue.serverTimestamp()
-    };
-
-    // Colectare ID-uri pentru monede unice
-    if (claim.spawnId && !claim.spawnId.startsWith('ad-')) {
-        updates.collectedIds = FieldValue.arrayUnion(claim.spawnId);
-    }
-
-    // Actualizăm sub-balanțele specifice pentru Airdrop Estimation
-    switch (claim.category) {
-        case 'URBAN': 
-        case 'MALL': 
-            updates.gameplayBalance = FieldValue.increment(value); 
-            break;
-        case 'LANDMARK': 
-            updates.rareBalance = FieldValue.increment(value); 
-            updates.rareItemsCollected = FieldValue.increment(1);
-            break;
-        case 'EVENT': 
-            updates.eventBalance = FieldValue.increment(value); 
-            updates.eventItemsCollected = FieldValue.increment(1);
-            break;
-        case 'MERCHANT': 
-            updates.merchantBalance = FieldValue.increment(value); 
-            updates.sponsoredAdsWatched = FieldValue.increment(1);
-            break;
-        case 'GIFTBOX':
-            updates.gameplayBalance = FieldValue.increment(value);
-            break;
-        case 'AD_REWARD':
-            updates.dailySupplyBalance = FieldValue.increment(value);
-            updates.adsWatched = FieldValue.increment(1);
-            updates.lastDailyClaim = Date.now();
-            break;
-    }
-
-    // Folosim SET cu MERGE pentru a crea documentul dacă hunter-ul e nou
     try {
+        const userDoc = await userRef.get();
+        const userData = userDoc.data();
+
+        // Dacă item-ul a fost deja colectat, marcăm claim-ul ca invalid și ne oprim
+        if (isUniqueCategory && spawnId && userData?.collectedIds?.includes(spawnId)) {
+            console.warn(`Attempted duplicate claim for unique item: ${spawnId} by user ${userIdStr}`);
+            await snap.ref.update({ status: 'rejected_duplicate', processedAt: FieldValue.serverTimestamp() });
+            return;
+        }
+
+        const value = Number(claim.claimedValue || 0);
+        const tonValue = Number(claim.tonReward || 0);
+
+        const updates: any = {
+            telegramId: Number(claim.userId),
+            balance: FieldValue.increment(value),
+            tonBalance: FieldValue.increment(tonValue),
+            lastActive: FieldValue.serverTimestamp()
+        };
+
+        // Adăugăm ID-ul în lista de colectate
+        if (spawnId && !spawnId.startsWith('ad-')) {
+            updates.collectedIds = FieldValue.arrayUnion(spawnId);
+        }
+
+        switch (category) {
+            case 'URBAN': 
+            case 'MALL': 
+                updates.gameplayBalance = FieldValue.increment(value); 
+                break;
+            case 'LANDMARK': 
+                updates.rareBalance = FieldValue.increment(value); 
+                updates.rareItemsCollected = FieldValue.increment(1);
+                break;
+            case 'EVENT': 
+                updates.eventBalance = FieldValue.increment(value); 
+                updates.eventItemsCollected = FieldValue.increment(1);
+                break;
+            case 'MERCHANT': 
+                updates.merchantBalance = FieldValue.increment(value); 
+                updates.sponsoredAdsWatched = FieldValue.increment(1);
+                break;
+            case 'GIFTBOX':
+                updates.gameplayBalance = FieldValue.increment(value);
+                break;
+            case 'AD_REWARD':
+                updates.dailySupplyBalance = FieldValue.increment(value);
+                updates.adsWatched = FieldValue.increment(1);
+                updates.lastDailyClaim = Date.now();
+                break;
+        }
+
         await userRef.set(updates, { merge: true });
         await snap.ref.update({ 
             status: 'verified', 
             processedAt: FieldValue.serverTimestamp() 
         });
-        console.log(`Successfully processed claim for user ${userIdStr}: +${value} ELZR`);
+        
     } catch (err) {
         console.error("Critical Trigger Failure:", err);
     }

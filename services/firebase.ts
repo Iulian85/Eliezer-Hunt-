@@ -15,7 +15,8 @@ import {
     addDoc,
     serverTimestamp,
     increment,
-    deleteDoc
+    deleteDoc,
+    arrayUnion
 } from "@firebase/firestore";
 import { getFunctions, httpsCallable } from "@firebase/functions";
 import FingerprintJS from '@fingerprintjs/fingerprintjs';
@@ -168,7 +169,7 @@ export const saveCollectionToFirebase = async (tgId: number, spawnId: string, va
     const userRef = doc(db, "users", tgId.toString());
 
     try {
-        // 1. Salvăm cererea (pentru audit/istoric)
+        // Înregistrăm colectarea pentru procesare backend
         await addDoc(collection(db, "claims"), {
             userId: Number(tgId),
             spawnId,
@@ -176,24 +177,25 @@ export const saveCollectionToFirebase = async (tgId: number, spawnId: string, va
             tonReward: Number(tonReward),
             category: category || "URBAN", 
             timestamp: serverTimestamp(),
-            status: "verified", // O marcăm direct ca verificată pentru demo
+            status: "pending", 
             fingerprint: fingerprint,
             cloudId: cloudId
         });
 
-        // 2. ACTUALIZĂM BALANȚA IMEDIAT ÎN FIRESTORE
-        // Această comandă va declanșa onSnapshot în App.tsx și Wallet se va actualiza instant!
+        // Actualizăm profilul utilizatorului
         const updates: any = {
-            balance: increment(value),
-            tonBalance: increment(tonReward),
             lastActive: serverTimestamp()
         };
 
+        // Adăugăm ID-ul în colecția de colectate pentru a preveni reapariția
         if (spawnId && !spawnId.startsWith('ad-')) {
-            updates.collectedIds = [spawnId]; // Firestore arrayUnion ar fi mai bine, dar setăm baza
+            updates.collectedIds = arrayUnion(spawnId);
         }
 
-        // Categorisire pentru Airdrop Estimation
+        // Incrementăm local balanțele pentru feedback instant
+        updates.balance = increment(value);
+        updates.tonBalance = increment(tonReward);
+
         switch (category) {
             case 'URBAN': case 'MALL': updates.gameplayBalance = increment(value); break;
             case 'LANDMARK': updates.rareBalance = increment(value); updates.rareItemsCollected = increment(1); break;
@@ -214,7 +216,6 @@ export const saveCollectionToFirebase = async (tgId: number, spawnId: string, va
 };
 
 export const requestAdRewardFirebase = async (tgId: number, rewardValue: number) => {
-    // Redirecționăm către funcția principală care face și update-ul de balanță
     await saveCollectionToFirebase(tgId, `ad-manual-${Date.now()}`, rewardValue, 'AD_REWARD');
 };
 
@@ -228,7 +229,6 @@ export const processReferralReward = async (referrerId: string, newUserId: numbe
             status: "verified"
         });
         
-        // Recompensăm referentul (dacă am avea acces la ID-ul lui aici, dar îl facem simplu)
         await updateDoc(doc(db, "users", newUserId.toString()), {
             hasClaimedReferral: true
         });
@@ -268,7 +268,6 @@ export const updateUserWalletInFirebase = async (id: number, w: string) => {
 };
 
 export const resetUserInFirebase = async (targetUserId: number): Promise<{success: boolean, error?: string}> => {
-    // În modul Demo/Client-Side, resetăm direct documentul
     try {
         const userRef = doc(db, "users", targetUserId.toString());
         await updateDoc(userRef, {
