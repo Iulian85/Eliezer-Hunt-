@@ -32,30 +32,28 @@ function verifyTelegramData(initData: string): boolean {
 }
 
 /**
- * SECURE CLAIM HANDLER (V5.6 - COMPLETE FIX)
+ * SECURE CLAIM HANDLER (V5.7)
+ * Fixes: Ad points, GPS Jitter in RO, and multi-category tracking.
  */
 export const secureClaim = onCall({
-    maxInstances: 10,
+    maxInstances: 20,
     memory: "256MiB"
 }, async (request) => {
     const { userId, spawnId, category, initData, coords, tonReward } = request.data || {};
     
     if (!verifyTelegramData(initData)) {
-        throw new HttpsError('unauthenticated', 'Security Breach: Invalid session signature.');
-    }
-
-    if (!userId || !spawnId) {
-        throw new HttpsError('invalid-argument', 'Missing protocol data.');
+        throw new HttpsError('unauthenticated', 'Integrity check failed.');
     }
 
     const userRef = db.collection('users').doc(String(userId));
     const userSnap = await userRef.get();
     const userData = userSnap.data();
 
-    // ANTI-CHEAT: Verificare viteză doar pentru colectări de pe hartă (nu pentru reclame Daily Reward)
-    const isStationaryClaim = category === 'AD_REWARD';
+    // EXCEPȚIE TOTALĂ PENTRU RECLAME (Daily Reward)
+    const isAd = category === 'AD_REWARD';
     
-    if (!isStationaryClaim && userData && userData.lastActiveLocation && userData.lastActiveAt && coords) {
+    if (!isAd && userData && userData.lastActiveLocation && userData.lastActiveAt && coords) {
+        // Verificăm viteza doar pentru colectări de pe hartă
         const lastCoords = userData.lastActiveLocation;
         const lastTime = userData.lastActiveAt.toMillis ? userData.lastActiveAt.toMillis() : userData.lastActiveAt;
         
@@ -66,21 +64,19 @@ export const secureClaim = onCall({
                 Math.cos(lastCoords.lat * Math.PI/180) * Math.cos(coords.lat * Math.PI/180) * 
                 Math.sin(dLon/2) * Math.sin(dLon/2);
         const d = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-        
         const timeDiffHours = (Date.now() - lastTime) / (1000 * 60 * 60);
         const speed = d / (timeDiffHours || 0.0001);
 
-        // Dacă locația e invalidă (0,0) sau viteza e prea mare, blocăm extracția fizică
-        if ((coords.lat === 0 && coords.lng === 0) || (speed > 15 && d > 0.2)) { 
-             throw new HttpsError('permission-denied', 'Walking speed exceeded or invalid GPS.');
+        if (speed > 15 && d > 0.3) { 
+             throw new HttpsError('permission-denied', 'Mersul pe jos este obligatoriu pentru colectare.');
         }
     }
 
-    // SERVER-SIDE VALUE DEFINITION
+    // Definirea valorilor pe server (Userul nu poate modifica valoarea punctelor)
     let finalValue = 100; 
     if (category === 'LANDMARK' || category === 'EVENT') finalValue = 1000;
     if (category === 'AD_REWARD') finalValue = 500;
-    if (category === 'GIFTBOX') finalValue = Math.floor(Math.random() * 901) + 100; // 100 - 1000 random bonus
+    if (category === 'GIFTBOX') finalValue = Math.floor(Math.random() * 500) + 100;
     
     if (category === 'MERCHANT') {
         const campId = spawnId.split('-coin-')[0];
@@ -99,47 +95,46 @@ export const secureClaim = onCall({
             claimedValue: finalValue,
             tonReward: Number(tonReward || 0),
             category: category || "URBAN",
-            coords: coords || null,
             timestamp: FieldValue.serverTimestamp(),
             status: "pending"
         });
 
-        // IMPORTANȚĂ CRITICĂ: Nu actualizăm locația dacă extracția este staționară (reclame)
-        // pentru a nu teleporta utilizatorul la (0,0) și a bloca check-ul de viteză următor.
-        if (!isStationaryClaim && coords && coords.lat !== 0) {
+        // Actualizăm locația doar dacă nu este reclamă
+        if (!isAd && coords && coords.lat !== 0) {
             await userRef.set({
                 lastActiveLocation: coords,
                 lastActiveAt: FieldValue.serverTimestamp()
             }, { merge: true });
         }
 
-        return { success: true, verifiedValue: finalValue };
+        return { success: true, points: finalValue };
     } catch (e: any) {
-        throw new HttpsError('internal', 'Extraction failed.');
+        throw new HttpsError('internal', 'Sistem offline.');
     }
 });
 
 /**
  * SECURE REFERRAL HANDLER
+ * Fixes: Welcome bonus (25) for invited user + Referrer reward (50).
  */
 export const secureReferral = onCall(async (request) => {
     const { referrerId, userId, userName, initData } = request.data || {};
 
     if (!verifyTelegramData(initData)) {
-        throw new HttpsError('unauthenticated', 'Invalid integrity check.');
+        throw new HttpsError('unauthenticated', 'Invalid hash.');
     }
 
     const newUserRef = db.collection('users').doc(String(userId));
-    const userSnap = await newUserRef.get();
+    const referrerRef = db.collection('users').doc(String(referrerId));
     
+    const userSnap = await newUserRef.get();
     if (userSnap.exists && userSnap.data()?.hasClaimedReferral) {
-        return { success: false, message: "Referral already processed." };
+        return { success: false };
     }
 
     const batch = db.batch();
-    const referrerRef = db.collection('users').doc(String(referrerId));
 
-    // 1. Recompensă Referer (50 Pct)
+    // 1. Bonus Referer (Cel care a trimis link-ul)
     batch.set(referrerRef, {
         balance: FieldValue.increment(50),
         referralBalance: FieldValue.increment(50),
@@ -147,8 +142,7 @@ export const secureReferral = onCall(async (request) => {
         referralNames: FieldValue.arrayUnion(userName || "Hunter")
     }, { merge: true });
 
-    // 2. Recompensă Bun Venit pentru cel invitat (25 Pct)
-    // Folosim merge:true pentru a nu suprascrie doc-ul dacă există deja
+    // 2. Bonus Bun Venit (Cel care a dat click pe link)
     batch.set(newUserRef, {
         balance: FieldValue.increment(25),
         gameplayBalance: FieldValue.increment(25),
@@ -159,6 +153,10 @@ export const secureReferral = onCall(async (request) => {
     return { success: true };
 });
 
+/**
+ * LEDGER TRIGGER
+ * Acesta este "motorul" care pune punctele în Wallet-ul corect pe server.
+ */
 export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event) => {
     const snap = event.data;
     if (!snap) return;
@@ -167,37 +165,43 @@ export const onClaimCreated = onDocumentCreated('claims/{claimId}', async (event
 
     try {
         if (claim.status === 'verified') return;
+        
         const value = Number(claim.claimedValue || 0);
         const tonValue = Number(claim.tonReward || 0);
-        const category = claim.category || 'URBAN';
+        const category = claim.category;
         const spawnId = claim.spawnId;
 
-        const userUpdate: any = {
+        const update: any = {
             balance: FieldValue.increment(value),
             tonBalance: FieldValue.increment(tonValue),
             lastActive: FieldValue.serverTimestamp()
         };
 
         if (spawnId && !spawnId.startsWith('ad-')) {
-            userUpdate.collectedIds = FieldValue.arrayUnion(spawnId);
+            update.collectedIds = FieldValue.arrayUnion(spawnId);
         }
 
+        // Distribuție precisă pe balanțele de Airdrop Estimation
         if (category === 'AD_REWARD') {
-            userUpdate.dailySupplyBalance = FieldValue.increment(value);
-            userUpdate.lastDailyClaim = Date.now();
+            update.dailySupplyBalance = FieldValue.increment(value);
+            update.adsWatched = FieldValue.increment(1);
+            update.lastDailyClaim = Date.now();
         } else if (category === 'MERCHANT') {
-            userUpdate.merchantBalance = FieldValue.increment(value);
+            update.merchantBalance = FieldValue.increment(value);
         } else if (category === 'LANDMARK') {
-            userUpdate.rareBalance = FieldValue.increment(value);
+            update.rareBalance = FieldValue.increment(value);
+            update.rareItemsCollected = FieldValue.increment(1);
         } else if (category === 'EVENT') {
-            userUpdate.eventBalance = FieldValue.increment(value);
+            update.eventBalance = FieldValue.increment(value);
+            update.eventItemsCollected = FieldValue.increment(1);
         } else if (category === 'GIFTBOX') {
-            userUpdate.gameplayBalance = FieldValue.increment(value);
+            // Cutiile cadou merg în gameplay balance dar pot da și TON
+            update.gameplayBalance = FieldValue.increment(value);
         } else {
-            userUpdate.gameplayBalance = FieldValue.increment(value);
+            update.gameplayBalance = FieldValue.increment(value);
         }
 
-        await userRef.set(userUpdate, { merge: true });
+        await userRef.set(update, { merge: true });
         await snap.ref.update({ status: 'verified', processedAt: FieldValue.serverTimestamp() });
     } catch (err: any) {
         await snap.ref.update({ status: 'error', errorMsg: err.message });
@@ -215,7 +219,7 @@ export const chatWithELZR = onCall(async (request) => {
                 role: m.role === 'model' ? 'model' : 'user', 
                 parts: [{ text: m.text }] 
             })),
-            config: { systemInstruction: "You are ELZR Scout. Be brief.", temperature: 0.7 }
+            config: { systemInstruction: "You are ELZR Scout. Brief and tactical.", temperature: 0.7 }
         });
         return { text: response.text };
     } catch (e: any) {

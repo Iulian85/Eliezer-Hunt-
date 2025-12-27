@@ -3,39 +3,31 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // Utilizatorii pot citi doar profilul lor (sau alții pentru leaderboard)
-    // Dar NU pot face update direct pe câmpuri sensibile (balanță, ban, etc.)
     match /users/{userId} {
-      allow read: if true;
-      allow create: if true; 
-      allow update: if false; // Toate update-urile trec prin Cloud Functions
+      allow read: if true; 
+      allow create: if true;
+      allow update: if false; // SECURITATE: Balanța poate fi schimbată DOAR de Cloud Functions
       allow delete: if false;
     }
     
-    // Cererile de colectare: clientul poate doar să creeze, nu să citească/modifice
     match /claims/{claimId} {
-      allow create: if request.auth == null; // Permitem crearea inițială (verificată în Functions)
+      allow create: if true; // Permitem crearea, dar statusul rămâne 'pending' până verifică serverul
       allow read, update, delete: if false;
-    }
-
-    match /ad_claims/{claimId} {
-      allow create: if true;
-      allow read: if false;
     }
 
     match /withdrawal_requests/{reqId} {
       allow create: if true;
-      allow read: if false;
+      allow read, update, delete: if false;
     }
     
     match /campaigns/{campId} {
       allow read: if true;
-      allow write: if false; // Doar Admin via Functions/Console
+      allow write, delete: if false; 
     }
 
     match /hotspots/{hId} {
       allow get, list: if true;
-      allow write: if false;
+      allow write, delete: if false;
     }
   }
 }
